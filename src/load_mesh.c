@@ -10,6 +10,10 @@
 //
 
 typedef struct {
+    int unknown_10;
+} SubmeshUnknownBlock;
+
+typedef struct {
     int unknown_1;
     int unknown_2;
     char unknown_3;
@@ -18,62 +22,65 @@ typedef struct {
     char unknown_5; // probably null terminator or "texture has alpha channel" flag
     int point_count;
     int indices_count;
-} MeshFileTextureBlock;
+
+    int unknown_blocks_count;
+    SubmeshUnknownBlock *unknown_blocks;
+
+} SubmeshInfoBlock;
 
 BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertices)
 {
     DWORD file_size = GetFileSize(file, NULL);
 
     // Determine texture count
-    int texture_count;
-    if (!ReadFile(file, &texture_count, sizeof(int), NULL, NULL)) {
+    int submesh_count;
+    if (!ReadFile(file, &submesh_count, sizeof(int), NULL, NULL)) {
         return FALSE;
     }
 
     int mesh_type = 0;
-    if (texture_count == 0) {
-        if (!ReadFile(file, &texture_count, sizeof(int), NULL, NULL)) {
+    if (submesh_count == 0) {
+        if (!ReadFile(file, &submesh_count, sizeof(int), NULL, NULL)) {
             return FALSE;
         }
         mesh_type = 1;
     }
 
-    mesh->texture_count = texture_count;
-    mesh->textures = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(Texture) * texture_count);
+    mesh->submesh_count = submesh_count;
+    mesh->submeshes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MeshSubmesh) * submesh_count);
 
-    MeshFileTextureBlock *texture_blocks = HeapAlloc(GetProcessHeap(), 0, sizeof(MeshFileTextureBlock) * texture_count);
-
-    for (int i = 0; i < texture_count; ++i) {
-        MeshFileTextureBlock *block = &texture_blocks[i];
+    SubmeshInfoBlock *submesh_info_blocks = HeapAlloc(GetProcessHeap(), 0, sizeof(SubmeshInfoBlock) * submesh_count);
+    for (int i = 0; i < submesh_count; ++i) {
+        SubmeshInfoBlock *submesh_info = &submesh_info_blocks[i];
 
         // ???
-        if (!ReadFile(file, &block->unknown_1, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->unknown_1, sizeof(int), NULL, NULL)) {
             return FALSE;
         }
-        if (!ReadFile(file, &block->unknown_2, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->unknown_2, sizeof(int), NULL, NULL)) {
             return FALSE;
         }
-        if (block->unknown_2 == 1) {
-            if (!ReadFile(file, &block->unknown_3, sizeof(char), NULL, NULL)) {
+        if (submesh_info->unknown_2 == 1) {
+            if (!ReadFile(file, &submesh_info->unknown_3, sizeof(char), NULL, NULL)) {
                 return FALSE;
             }
         }
 
         // Read texture name
-        if (!ReadFile(file, &block->texture_name_length, sizeof(char), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->texture_name_length, sizeof(char), NULL, NULL)) {
             return FALSE;
         }
-        if (!ReadFile(file, block->texture_name, block->texture_name_length, NULL, NULL)) {
+        if (!ReadFile(file, submesh_info->texture_name, submesh_info->texture_name_length, NULL, NULL)) {
             return FALSE;
         }
-        block->texture_name[block->texture_name_length] = '\0';
+        submesh_info->texture_name[submesh_info->texture_name_length] = '\0';
 
         // ???
-        if (!ReadFile(file, &block->unknown_5, sizeof(char), NULL, NULL)) { // probably null terminator
+        if (!ReadFile(file, &submesh_info->unknown_5, sizeof(char), NULL, NULL)) { // probably null terminator
             return FALSE;
         }
 
-        if (block->unknown_2 == 5) {
+        if (submesh_info->unknown_2 == 5) {
             float unknown_4floats[4];
             if (!ReadFile(file, unknown_4floats, sizeof(float) * 4, NULL, NULL)) {
                 return FALSE;
@@ -81,18 +88,18 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
         }
 
         // Read vertices and indices count
-        if (!ReadFile(file, &block->point_count, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->point_count, sizeof(int), NULL, NULL)) {
             return FALSE;
         }
-        if (!ReadFile(file, &block->indices_count, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->indices_count, sizeof(int), NULL, NULL)) {
             return FALSE;
         }
 
         // Sanity checks
-        if ((block->point_count * sizeof(int)) > file_size) {
+        if ((submesh_info->point_count * sizeof(int)) > file_size) {
             return FALSE;
         }
-        if ((block->indices_count * sizeof(int)) > file_size) {
+        if ((submesh_info->indices_count * sizeof(int)) > file_size) {
             return FALSE;
         }
 
@@ -112,7 +119,12 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
             if ((unknown_blocks_count * ((sizeof(int) * 8) + (sizeof(float) * 16))) > file_size) {
                 return FALSE;
             }
+
+            submesh_info->unknown_blocks_count = unknown_blocks_count;
+            submesh_info->unknown_blocks = HeapAlloc(GetProcessHeap(), 0, sizeof(SubmeshUnknownBlock) * unknown_blocks_count);
             for (int j = 0; j < unknown_blocks_count; ++j) {
+                SubmeshUnknownBlock *unknown_block = &submesh_info->unknown_blocks[j];
+
                 int unknown_2;
                 if (!ReadFile(file, &unknown_2, sizeof(int), NULL, NULL)) {
                     return FALSE;
@@ -152,6 +164,7 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
                     if (!ReadFile(file, &unknown_10, sizeof(int), NULL, NULL)) {
                         return FALSE;
                     }
+                    unknown_block->unknown_10 = unknown_10;
 
                     int unknown_11;
                     if (!ReadFile(file, &unknown_11, sizeof(int), NULL, NULL)) {
@@ -168,15 +181,9 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
         }
     }
 
-    // ???
-    char unknown_13bytes[13];
-    if (!ReadFile(file, unknown_13bytes, sizeof(char) * 13, NULL, NULL)) {
-        return FALSE;
-    }
-
     // Load textures
-    for (int i = 0; i < texture_count; ++i) {
-        MeshFileTextureBlock *block = &texture_blocks[i];
+    for (int i = 0; i < submesh_count; ++i) {
+        SubmeshInfoBlock *block = &submesh_info_blocks[i];
 
         // Load texture
         char texture_path[MAX_PATH];
@@ -193,7 +200,9 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
         if (PathCombine(texture_path, texture_path, block->texture_name) == NULL) { // add texture name
             return FALSE;
         }
-        if (!Texture_Load(&mesh->textures[i], texture_path)) {
+
+        MeshSubmesh *submesh = &mesh->submeshes[i];
+        if (!Texture_Load(&submesh->texture, texture_path)) {
             TCHAR message[1000];
             wsprintf(message, "\"%s\" not found. Please extract \"Textures.vfs\" archive", texture_path);
             MessageBox(NULL, message, "Texture not found", MB_OK | MB_ICONWARNING);
@@ -202,15 +211,35 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
     }
 
     // Read blocks data
-//    for (int i = 0; i < texture_count; ++i) {
-    for (int i = 0; i < 1; ++i) {
-        MeshFileTextureBlock *block = &texture_blocks[i];
+    for (int i = 0; i < submesh_count; ++i) {
+    // for (int i = 0; i < 1; ++i) {
+
+        // ???
+        char unknown_byte;
+        if (!ReadFile(file, &unknown_byte, sizeof(char), NULL, NULL)) {
+            return FALSE;
+        }
+        float unknown_float1;
+        if (!ReadFile(file, &unknown_float1, sizeof(float), NULL, NULL)) {
+            return FALSE;
+        }
+        float unknown_float2;
+        if (!ReadFile(file, &unknown_float2, sizeof(float), NULL, NULL)) {
+            return FALSE;
+        }
+        float unknown_float3;
+        if (!ReadFile(file, &unknown_float3, sizeof(float), NULL, NULL)) {
+            return FALSE;
+        }
+
+        SubmeshInfoBlock *block = &submesh_info_blocks[i];
+        MeshSubmesh *submesh = &mesh->submeshes[i];
 
         // Read points
-        mesh->point_count = block->point_count;
-        mesh->points = HeapAlloc(GetProcessHeap(), 0, sizeof(MeshPoint) * mesh->point_count);
+        submesh->point_count = block->point_count;
+        submesh->points = HeapAlloc(GetProcessHeap(), 0, sizeof(MeshPoint) * submesh->point_count);
         for (int j = 0; j < block->point_count; ++j) {
-            MeshPoint *point = &mesh->points[j];
+            MeshPoint *point = &submesh->points[j];
 
             if (float_vertices) {
                 float x;
@@ -274,37 +303,45 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
             }
         }
 
-//    if (skip_unknown_gap) {
-//        cursor += sizeof(char); // ???
-//    }
-
         // Read triangles
-        mesh->triangle_count = block->indices_count;
-        mesh->triangles = HeapAlloc(GetProcessHeap(), 0, sizeof(MeshTriangle) * mesh->triangle_count);
+        submesh->triangle_count = block->indices_count;
+        submesh->triangles = HeapAlloc(GetProcessHeap(), 0, sizeof(MeshTriangle) * submesh->triangle_count);
         for (int j = 0; j < block->indices_count; ++j) {
-            MeshTriangle *triangle = &mesh->triangles[j];
+            MeshTriangle *triangle = &submesh->triangles[j];
 
-            unsigned short v1;
-            if (!ReadFile(file, &v1, sizeof(unsigned short), NULL, NULL)) {
-                return FALSE;
-            }
-            unsigned short v2;
-            if (!ReadFile(file, &v2, sizeof(unsigned short), NULL, NULL)) {
-                return FALSE;
-            }
-            unsigned short v3;
-            if (!ReadFile(file, &v3, sizeof(unsigned short), NULL, NULL)) {
-                return FALSE;
-            }
+            // Read indices
+            unsigned short v1, v2, v3;
+            if (!ReadFile(file, &v1, sizeof(unsigned short), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &v2, sizeof(unsigned short), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &v3, sizeof(unsigned short), NULL, NULL)) { return FALSE; }
 
             // Sanity checks
-            if (v1 >= mesh->point_count) { return FALSE; }
-            if (v2 >= mesh->point_count) { return FALSE; }
-            if (v3 >= mesh->point_count) { return FALSE; }
+            if (v1 >= submesh->point_count) { return FALSE; }
+            if (v2 >= submesh->point_count) { return FALSE; }
+            if (v3 >= submesh->point_count) { return FALSE; }
 
             triangle->a = v1;
             triangle->b = v2;
             triangle->c = v3;
+        }
+
+        // ???
+        for (int j = 0; j < block->unknown_blocks_count; ++j) {
+            SubmeshUnknownBlock *unknown_block = &block->unknown_blocks[j];
+            for (int k = 0; k < unknown_block->unknown_10; ++k) {
+                unsigned short unknown_short;
+                if (!ReadFile(file, &unknown_short, sizeof(short), NULL, NULL)) {
+                    return FALSE;
+                }
+                float unknown_float4;
+                if (!ReadFile(file, &unknown_float4, sizeof(float), NULL, NULL)) {
+                    return FALSE;
+                }
+                float unknown_float5;
+                if (!ReadFile(file, &unknown_float5, sizeof(float), NULL, NULL)) {
+                    return FALSE;
+                }
+            }
         }
     }
 

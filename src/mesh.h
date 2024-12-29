@@ -15,12 +15,16 @@ typedef struct {
 } MeshTriangle;
 
 typedef struct {
-    int texture_count;
-    Texture *textures;
+    Texture texture;
     int point_count;
     MeshPoint *points;
     int triangle_count;
     MeshTriangle *triangles;
+} MeshSubmesh;
+
+typedef struct {
+    int submesh_count;
+    MeshSubmesh *submeshes;
 } Mesh;
 
 BOOL Mesh_LoadFromPathologicFormat(Mesh *mesh, const char *path);
