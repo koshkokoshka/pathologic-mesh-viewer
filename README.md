@@ -11,7 +11,7 @@ This tool makes possible to load and explore the game's 3D assets.
 ## How to Use
 
 1. **Download or Build the Viewer**
-    - Download a prebuilt version or build the project from the source code.
+    - [Download a prebuilt version](https://github.com/koshkokoshka/pathologic-mesh-viewer/releases) or build the project from the source code.
 
 2. **Prepare the Game Assets**
     - Extract `Geometries.vfs` and `Textures.vfs` archives located in game data folder.
