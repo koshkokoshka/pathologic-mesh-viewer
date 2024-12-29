@@ -54,13 +54,13 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
         SubmeshInfoBlock *submesh_info = &submesh_info_blocks[i];
 
         // ???
-        if (!ReadFile(file, &submesh_info->unknown_1, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->unknown_1, sizeof(int), NULL, NULL)) { // probably ID
             return FALSE;
         }
-        if (!ReadFile(file, &submesh_info->unknown_2, sizeof(int), NULL, NULL)) {
+        if (!ReadFile(file, &submesh_info->unknown_2, sizeof(int), NULL, NULL)) { // unknown, usually 1 or 17 (maybe material ID?)
             return FALSE;
         }
-        if (submesh_info->unknown_2 == 1) {
+        if (submesh_info->unknown_2 != 0) {
             if (!ReadFile(file, &submesh_info->unknown_3, sizeof(char), NULL, NULL)) {
                 return FALSE;
             }
@@ -76,10 +76,12 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *path, BOOL float_vertice
         submesh_info->texture_name[submesh_info->texture_name_length] = '\0';
 
         // ???
-        if (!ReadFile(file, &submesh_info->unknown_5, sizeof(char), NULL, NULL)) { // probably null terminator
-            return FALSE;
+        if (submesh_info->unknown_2 == 1) {
+            char unknown_4;
+            if (!ReadFile(file, &unknown_4, sizeof(char), NULL, NULL)) {
+                return FALSE;
+            }
         }
-
         if (submesh_info->unknown_2 == 5) {
             float unknown_4floats[4];
             if (!ReadFile(file, unknown_4floats, sizeof(float) * 4, NULL, NULL)) {
