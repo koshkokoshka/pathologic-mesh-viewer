@@ -77,23 +77,36 @@ struct {
 
     } submesh_info[submesh_count];
 
-    unsgined char unknown[13]; // unknown 13 bytes
-
     struct {
-       struct {
-           short x;
-           short y;
-           short z;
-           char unknown[4]; // unknown 4 bytes
-           float u;
-           float v;
-       } vertices[vertices_count];
+        struct {
+            char unknown_byte;
+            float unknown_float1;
+            float unknown_float2;
+            float unknown_float3;
+        } unknown_1;
 
-       struct {
-           short v1;
-           short v2;
-           short v3;
-       } indices[indices_count];
+        struct {
+            short x;
+            short y;
+            short z;
+            char unknown[4]; // unknown 4 bytes
+            float u;
+            float v;
+        } vertices[vertices_count];
+
+        struct {
+            short v1;
+            short v2;
+            short v3;
+        } indices[indices_count];
+
+        struct {
+            struct {
+                short unknown_short;
+                float unknown_float1;
+                float unknown_float2;
+            } unknown[block_unknown10];
+        } unknown_2[unknown_blocks_count];
 
     } submeshes[submesh_count];
 } mesh;
