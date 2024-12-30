@@ -496,7 +496,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
 
     // Create window
     HWND window = CreateWindowEx(
-        WS_EX_COMPOSITED, window_class.lpszClassName, TEXT("Pathologic Mesh Viewer v0.2"), window_style,
+        WS_EX_COMPOSITED, window_class.lpszClassName, TEXT("Pathologic Mesh Viewer v0.3"), window_style,
         window_rect.left, window_rect.top, window_rect.right, window_rect.bottom,
         NULL, NULL, hInstance, NULL);
     if (window == INVALID_HANDLE_VALUE) {
