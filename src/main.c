@@ -2,6 +2,8 @@
 #include <windowsx.h>
 #define _USE_MATH_DEFINES
 #include <math.h>
+#include <shlwapi.h>
+#include <stdio.h>
 
 #include "math.h"
 #include "draw.h"
@@ -19,6 +21,7 @@ HMENU g_menu;
 // Loaded mesh
 Mesh g_mesh;
 BOOL g_mesh_loaded = FALSE;
+BOOL g_mesh_error = FALSE;
 char g_mesh_path[MAX_PATH];
 
 void Viewport_CalculateBounds()
@@ -69,17 +72,12 @@ void Viewport_CalculateBounds()
 
 void TryLoadMesh(HWND window, const char *path)
 {
+    strcpy(g_mesh_path, path);
     g_mesh_loaded = Mesh_LoadFromPathologicFormat(&g_mesh, path);
     if (!g_mesh_loaded) {
-        MessageBox(
-            window,
-            TEXT("An error occurred while trying to load the selected model. Please note that Pathologic Mesh Viewer is still under development and may fail to load some game meshes."),
-            TEXT("Failed to load .mesh file"),
-            MB_OK | MB_ICONWARNING
-        );
+        g_mesh_error = TRUE;
         return;
     }
-    strcpy(g_mesh_path, path);
     Viewport_CalculateBounds();
 }
 
@@ -171,9 +169,9 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
                              cx, cy, cz, c.u, c.v);
             }
             if (draw_wireframe) {
-                DrawLine(ax, ay, bx, by, 0x66FF66);
-                DrawLine(bx, by, cx, cy, 0x66FF66);
-                DrawLine(cx, cy, ax, ay, 0x66FF66);
+                DrawLine(ax, ay, bx, by, 0x999922);
+                DrawLine(bx, by, cx, cy, 0x999922);
+                DrawLine(cx, cy, ax, ay, 0x999922);
             }
         }
     }
@@ -213,7 +211,7 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
                 y = (0.5f + y) * g_screen_dimension + g_screen_dimension_offset_y;
 
                 // Draw points
-                DrawPoint(x, y, 0xFF0000);
+                DrawPoint(x, y, 0x66FF66);
             }
         }
     }
@@ -392,8 +390,17 @@ void Window_OnPaint(HWND window)
     RECT client_rect;
     GetClientRect(window, &client_rect);
     if (!g_mesh_loaded) {
-        DrawText(ps.hdc, TEXT("Select Pathologic .mesh with File -> Open..."), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
-    } else {
+        if (g_mesh_error) {
+            COLORREF old_bk_color = SetBkColor(ps.hdc, RGB(0xFF, 0x00, 0x00));
+            COLORREF old_text_color = SetTextColor(ps.hdc, RGB(0xFF, 0xFF, 0xFF));
+            DrawText(ps.hdc, TEXT("An error occurred while trying to load the selected model"), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+            SetBkColor(ps.hdc, old_bk_color);
+            SetTextColor(ps.hdc, old_text_color);
+        } else {
+            DrawText(ps.hdc, TEXT("Select Pathologic .mesh with File -> Open..."), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        }
+    }
+    if (g_mesh_path != NULL) {
         DrawText(ps.hdc, g_mesh_path, -1, &client_rect, DT_RIGHT);
     }
 
