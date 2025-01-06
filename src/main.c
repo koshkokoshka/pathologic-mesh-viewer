@@ -8,6 +8,7 @@
 #include "math.h"
 #include "draw.h"
 #include "mesh.h"
+#include "clip_triangle.h"
 
 // Window menu
 #define MENU_ITEM_ID_DRAW_WIREFRAME 1
@@ -81,13 +82,33 @@ void TryLoadMesh(HWND window, const char *path)
     Viewport_CalculateBounds();
 }
 
+BOOL GenerateCheckerboardTexture(Texture *output, int width, int height, int pattern_size, DWORD color1, DWORD color2)
+{
+    // Initialize texture
+    output->width = width;
+    output->height = height;
+    output->data = HeapAlloc(GetProcessHeap(), 0, height * width * sizeof(DWORD));
+    if (output->data == NULL) {
+        return FALSE;
+    }
+
+    // Draw the checkerboard pattern
+    for (UINT y = 0; y < output->height; ++y) {
+        for (UINT x = 0; x < output->width; ++x) {
+            UINT i = (y * output->width) + x;
+            output->data[i] = ((x / pattern_size) + (y / pattern_size)) % 2 == 0 ? color1 : color2;
+        }
+    }
+    return TRUE;
+}
+
 void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
 {
     // Precompute screen-related values
     PrecomputeRenderingVariables();
 
     // Clear buffers
-    for (int i = 0; i < g_screen_width * g_screen_height; ++i) { g_screen_color[i] = 0x393029; }
+    for (int i = 0; i < g_screen_width * g_screen_height; ++i) { g_screen_color[i] = 0x635242; } // background color
     for (int i = 0; i < g_screen_width * g_screen_height; ++i) { g_screen_depth[i] = 0.0f; }
 
     if (!g_mesh_loaded) {
@@ -108,70 +129,73 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
             MeshPoint b = submesh.points[t.b];
             MeshPoint c = submesh.points[t.c];
 
-            float ax = a.x;
-            float ay = a.y;
-            float az = a.z;
-            ay *= -1;
-            float bx = b.x;
-            float by = b.y;
-            float bz = b.z;
-            by *= -1;
-            float cx = c.x;
-            float cy = c.y;
-            float cz = c.z;
-            cy *= -1;
+            // Fix coordinates system
+            a.y *= -1;
+            b.y *= -1;
+            c.y *= -1;
 
             // Model-space rotation
-            Point_Rotate(&ax, &az, mesh_rot_sin, mesh_rot_cos);
-            Point_Rotate(&bx, &bz, mesh_rot_sin, mesh_rot_cos);
-            Point_Rotate(&cx, &cz, mesh_rot_sin, mesh_rot_cos);
+            Point_Rotate(&a.x, &a.z, mesh_rot_sin, mesh_rot_cos);
+            Point_Rotate(&b.x, &b.z, mesh_rot_sin, mesh_rot_cos);
+            Point_Rotate(&c.x, &c.z, mesh_rot_sin, mesh_rot_cos);
 
-            Point_Rotate(&ay, &az, mesh_yaw_sin, mesh_yaw_cos);
-            Point_Rotate(&by, &bz, mesh_yaw_sin, mesh_yaw_cos);
-            Point_Rotate(&cy, &cz, mesh_yaw_sin, mesh_yaw_cos);
+            Point_Rotate(&a.y, &a.z, mesh_yaw_sin, mesh_yaw_cos);
+            Point_Rotate(&b.y, &b.z, mesh_yaw_sin, mesh_yaw_cos);
+            Point_Rotate(&c.y, &c.z, mesh_yaw_sin, mesh_yaw_cos);
 
             // Model-space transform
-            ax += g_camera_x;
-            ay += g_camera_y;
-            az += g_camera_z;
-            bx += g_camera_x;
-            by += g_camera_y;
-            bz += g_camera_z;
-            cx += g_camera_x;
-            cy += g_camera_y;
-            cz += g_camera_z;
+            a.x += g_camera_x;
+            a.y += g_camera_y;
+            a.z += g_camera_z;
+            b.x += g_camera_x;
+            b.y += g_camera_y;
+            b.z += g_camera_z;
+            c.x += g_camera_x;
+            c.y += g_camera_y;
+            c.z += g_camera_z;
 
-            // Perspective divide
-            ax /= az;
-            ay /= az;
-            bx /= bz;
-            by /= bz;
-            cx /= cz;
-            cy /= cz;
+            //
+            // Clipping
+            //
+            MeshPoint splits[CLIP_MAX_POINTS] = { a, b, c };
+            int splits_count = ClipTriangle(splits, NEAR_CLIP);
+            for (int i2 = 0; i2 < splits_count; ++i2) {
+                a = splits[(i2 * 3) + 0];
+                b = splits[(i2 * 3) + 1];
+                c = splits[(i2 * 3) + 2];
 
-            // Backface culling
-            if (az <= 0) { continue; }
-            if (bz <= 0) { continue; }
-            if (cz <= 0) { continue; }
+                // Perspective divide
+                a.x /= a.z;
+                a.y /= a.z;
+                b.x /= b.z;
+                b.y /= b.z;
+                c.x /= c.z;
+                c.y /= c.z;
 
-            // Screen-space transform (remap from [-0.5, 0.5] to [0, screen_dimension]
-            ax = (0.5f + ax) * g_screen_dimension + g_screen_dimension_offset_x;
-            ay = (0.5f + ay) * g_screen_dimension + g_screen_dimension_offset_y;
-            bx = (0.5f + bx) * g_screen_dimension + g_screen_dimension_offset_x;
-            by = (0.5f + by) * g_screen_dimension + g_screen_dimension_offset_y;
-            cx = (0.5f + cx) * g_screen_dimension + g_screen_dimension_offset_x;
-            cy = (0.5f + cy) * g_screen_dimension + g_screen_dimension_offset_y;
+                // Backface culling
+                if (a.z <= 0) { continue; }
+                if (b.z <= 0) { continue; }
+                if (c.z <= 0) { continue; }
 
-            if (draw_faces) {
-                DrawTriangle(submesh.texture,
-                             ax, ay, az, a.u, a.v,
-                             bx, by, bz, b.u, b.v,
-                             cx, cy, cz, c.u, c.v);
-            }
-            if (draw_wireframe) {
-                DrawLine(ax, ay, bx, by, 0x999922);
-                DrawLine(bx, by, cx, cy, 0x999922);
-                DrawLine(cx, cy, ax, ay, 0x999922);
+                // Screen-space transform (remap from [-0.5, 0.5] to [0, screen_dimension]
+                a.x = (0.5f + a.x) * g_screen_dimension + g_screen_dimension_offset_x;
+                a.y = (0.5f + a.y) * g_screen_dimension + g_screen_dimension_offset_y;
+                b.x = (0.5f + b.x) * g_screen_dimension + g_screen_dimension_offset_x;
+                b.y = (0.5f + b.y) * g_screen_dimension + g_screen_dimension_offset_y;
+                c.x = (0.5f + c.x) * g_screen_dimension + g_screen_dimension_offset_x;
+                c.y = (0.5f + c.y) * g_screen_dimension + g_screen_dimension_offset_y;
+
+                if (draw_faces) {
+                    DrawTriangle(submesh.texture,
+                                 a.x, a.y, a.z, a.u, a.v,
+                                 b.x, b.y, b.z, b.u, b.v,
+                                 c.x, c.y, c.z, c.u, c.v);
+                }
+                if (draw_wireframe) {
+                    DrawLine(a.x, a.y, b.x, b.y, 0x999922);
+                    DrawLine(b.x, b.y, c.x, c.y, 0x999922);
+                    DrawLine(c.x, c.y, a.x, a.y, 0x999922);
+                }
             }
         }
     }
@@ -253,6 +277,9 @@ BOOL Window_Create(HWND window)
         return FALSE;
     }
 
+    // Initialize fallback texture
+    GenerateCheckerboardTexture(&fallback_texture, 64, 64, 8, 0xFF000000, 0xFFFF00FF);
+
     // Create menu
     g_menu = CreateMenu();
     HMENU menu_file = CreatePopupMenu();
@@ -326,26 +353,21 @@ void Window_OnMouseWheel(HWND window, WPARAM w_param)
     RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
 }
 
-void Window_OnLeftMouseDown(HWND window)
-{
-    SetCapture(window);
-}
-
-void Window_OnLeftMouseUp(HWND window)
-{
-    ReleaseCapture();
-}
-
-void Window_OnMouseMove(HWND window, LPARAM l_param)
+void Window_OnMouseMove(HWND window, WPARAM w_param, LPARAM l_param)
 {
     static int g_mouse_x;
     static int g_mouse_y;
 
     int x = GET_X_LPARAM(l_param);
     int y = GET_Y_LPARAM(l_param);
-    if (GetCapture() == window) {
+    if (w_param == MK_LBUTTON) {
         g_camera_rot += (float)(x - g_mouse_x) * 0.01f;
         g_camera_yaw += (float)(y - g_mouse_y) * 0.01f;
+        RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
+    }
+    if (w_param == MK_RBUTTON) {
+        g_camera_x += (float)(x - g_mouse_x) * g_camera_z * 0.001f;
+        g_camera_y += (float)(y - g_mouse_y) * g_camera_z * 0.001f;
         RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
     }
     g_mouse_x = x;
@@ -397,7 +419,7 @@ void Window_OnPaint(HWND window)
             SetBkColor(ps.hdc, old_bk_color);
             SetTextColor(ps.hdc, old_text_color);
         } else {
-            DrawText(ps.hdc, TEXT("Select Pathologic .mesh with File -> Open..."), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+            DrawText(ps.hdc, TEXT("Select Pathologic .mesh with drag-and-drop or File -> Open..."), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         }
     }
     if (g_mesh_path != NULL) {
@@ -434,15 +456,23 @@ LRESULT CALLBACK Window_Process(HWND window, UINT message, WPARAM w_param, LPARA
             return 0;
 
         case WM_LBUTTONDOWN:
-            Window_OnLeftMouseDown(window);
+            SetCapture(window);
             return 0;
 
         case WM_LBUTTONUP:
-            Window_OnLeftMouseUp(window);
+            ReleaseCapture();
+            return 0;
+
+        case WM_RBUTTONDOWN:
+            SetCapture(window);
+            return 0;
+
+        case WM_RBUTTONUP:
+            ReleaseCapture();
             return 0;
 
         case WM_MOUSEMOVE:
-            Window_OnMouseMove(window, l_param);
+            Window_OnMouseMove(window, w_param, l_param);
             return 0;
 
         case WM_DROPFILES:
@@ -496,7 +526,7 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
 
     // Create window
     HWND window = CreateWindowEx(
-        WS_EX_COMPOSITED, window_class.lpszClassName, TEXT("Pathologic Mesh Viewer v0.3"), window_style,
+        WS_EX_COMPOSITED, window_class.lpszClassName, TEXT("Pathologic Mesh Viewer v0.4"), window_style,
         window_rect.left, window_rect.top, window_rect.right, window_rect.bottom,
         NULL, NULL, hInstance, NULL);
     if (window == INVALID_HANDLE_VALUE) {

@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 11)
 add_executable(pathologic_mesh_viewer WIN32
         src/main.c
         src/clip_line.c
+        src/clip_triangle.c
         src/draw_globals.c
         src/draw_line.c
         src/draw_triangle.c

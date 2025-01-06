@@ -1,8 +1,8 @@
 #include "draw.h"
 
 // Screen buffer
-int g_screen_width = 800;
-int g_screen_height = 600;
+int g_screen_width = 640-2;
+int g_screen_height = 480-7-20;
 DWORD *g_screen_color;
 float *g_screen_depth;
 
@@ -17,3 +17,6 @@ float g_camera_y = 0.0f;
 float g_camera_z = 0.0f;
 float g_camera_rot = 0.0f;
 float g_camera_yaw = 0.0f;
+
+// Resources
+Texture fallback_texture;

@@ -89,9 +89,10 @@ void DrawTriangle(Texture texture,
                     tx = tx < 0 ? 0 : (tx > tw ? tw : tx);
                     ty = ty < 0 ? 0 : (ty > th ? th : ty);
                     DWORD color = texture.data[(ty * texture.width) + tx];
-
-                    g_screen_color[i] = color;
-                    g_screen_depth[i] = z;
+                    if ((color & 0xFF000000) != 0) { // alpha-test
+                        g_screen_color[i] = color;
+                        g_screen_depth[i] = z;
+                    }
                 }
             }
 

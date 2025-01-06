@@ -8,6 +8,11 @@
 #include "clip_line.h"
 
 //
+// Renderer constants
+//
+#define NEAR_CLIP 0.001f // note: setting too low may cause clipping problems
+
+//
 // Global draw variables
 //
 
@@ -35,6 +40,9 @@ extern float g_camera_y;
 extern float g_camera_z;
 extern float g_camera_rot;
 extern float g_camera_yaw;
+
+// Resources
+extern Texture fallback_texture;
 
 //
 // Draw functions
