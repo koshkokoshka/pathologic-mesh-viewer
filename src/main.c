@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <windowsx.h>
+#include <commctrl.h>
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <shlwapi.h>
@@ -10,20 +11,33 @@
 #include "mesh.h"
 #include "clip_triangle.h"
 
+#define APP_NAME "Pathologic Mesh Viewer v0.5"
+
 // Window menu
 #define MENU_ITEM_ID_DRAW_WIREFRAME 1
 #define MENU_ITEM_ID_DRAW_POINTS 2
 #define MENU_ITEM_ID_DRAW_FACES 3
+#define MENU_ITEM_ID_DRAW_TRANSPARENCY 4
 #define MENU_ITEM_ID_OPEN 10
+#define MENU_ITEM_ID_EXPORT_OBJ 11
 #define MENU_ITEM_ID_EXIT 20
 #define MENU_ITEM_ID_HELP 30
 HMENU g_menu;
+
+// Window statusbar
+#define IDC_STATUSBAR 10
+HWND g_statusbar;
 
 // Loaded mesh
 Mesh g_mesh;
 BOOL g_mesh_loaded = FALSE;
 BOOL g_mesh_error = FALSE;
-char g_mesh_path[MAX_PATH];
+char g_mesh_path[MAX_PATH] = "\0";
+
+char g_mesh_directory[MAX_PATH] = "\0";
+int g_mesh_directory_files_count = 0;
+int g_mesh_directory_file_number = 0;
+struct { char name[MAX_PATH]; } *g_mesh_directory_files;
 
 void Viewport_CalculateBounds()
 {
@@ -71,15 +85,182 @@ void Viewport_CalculateBounds()
     g_camera_yaw = 0;
 }
 
+BOOL FormatNumberWithCommas(char *output, int output_size, int number)
+{
+    // Get the current locale
+    LCID locale = GetUserDefaultLCID();
+
+    // Define number formatting options
+    NUMBERFMT format;
+    ZeroMemory(&format, sizeof(NUMBERFMT));
+    format.NumDigits = 0;          // No decimal places
+    format.LeadingZero = 0;        // No leading zero for fractional numbers
+    format.Grouping = 3;           // Group digits into thousands
+    format.lpDecimalSep = ".";     // Decimal separator
+    format.lpThousandSep = ",";    // Thousands separator
+    format.NegativeOrder = 1;      // Negative numbers format (-1)
+
+    // Format the number
+    char buffer[12]; // 12 characters should be enough to store integer as string with null terminator ("-2147483648\0")
+    snprintf(buffer, sizeof(buffer), "%d", number);
+    return GetNumberFormat(locale, 0, buffer, &format, output, output_size);
+}
+
 void TryLoadMesh(HWND window, const char *path)
 {
     strcpy(g_mesh_path, path);
+
+    char status[400];
+    snprintf(status, sizeof(status), "Loading: %s", g_mesh_path);;
+    SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&status);
+
+    // Get directory name
+    char directory[MAX_PATH];
+    strcpy(directory, g_mesh_path); // copy full .mesh file path
+    if (PathRemoveFileSpec(directory)) {
+
+        if (strcmp(directory, g_mesh_directory) != 0) { // if directory changed
+            // List .mesh files in directory
+            // and cache file names for navigation
+            g_mesh_directory_file_number = 0;
+            g_mesh_directory_files_count = 0;
+            char find_path[MAX_PATH];
+            snprintf(find_path, sizeof(find_path), "%s\\*.mesh", directory);
+            WIN32_FIND_DATA find_data;
+            HANDLE find = FindFirstFile(find_path, &find_data);
+            int directory_files_capacity = 6450; // 6450 - exact number of .mesh files in Pathologic Classic HD
+            g_mesh_directory_files = HeapAlloc(GetProcessHeap(), 0, sizeof(g_mesh_directory_files[0]) * directory_files_capacity);
+            do {
+                if ((find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+                    continue;
+                }
+                if (g_mesh_directory_files_count >= directory_files_capacity) {
+                    directory_files_capacity += 1024; // grow capacity
+                    g_mesh_directory_files = HeapReAlloc(GetProcessHeap(), 0, g_mesh_directory_files, sizeof(g_mesh_directory_files[0]) * directory_files_capacity);
+                }
+                strcpy(g_mesh_directory_files[g_mesh_directory_files_count].name, find_data.cFileName);
+                g_mesh_directory_files_count++;
+            } while (FindNextFile(find, &find_data));
+            FindClose(find);
+            strcpy(g_mesh_directory, directory); // store current directory path
+        }
+
+        // Find current file number
+        for (int i = 0; i < g_mesh_directory_files_count; ++i) {
+            if (strcmp(g_mesh_directory_files[i].name, PathFindFileName(g_mesh_path)) == 0) {
+                g_mesh_directory_file_number = i;
+                break;
+            }
+        }
+    }
+
+    // Set window title
+    char title[260];
+    snprintf(title, sizeof(title), "[%d/%d] %s - "APP_NAME, g_mesh_directory_file_number+1, g_mesh_directory_files_count, PathFindFileName(g_mesh_path));
+    SetWindowText(window, title);
+
+    if (g_mesh_loaded) {
+        // release previously allocated memory
+        for (int i = 0; i < g_mesh.submesh_count; ++i) {
+            HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].points);
+            HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].triangles);
+            if (g_mesh.submeshes[i].texture.data != fallback_texture.data) { // do not release memory of fallback texture
+                HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].texture.data);
+            }
+        }
+        HeapFree(GetProcessHeap(), 0, g_mesh.submeshes);
+    }
     g_mesh_loaded = Mesh_LoadFromPathologicFormat(&g_mesh, path);
     if (!g_mesh_loaded) {
         g_mesh_error = TRUE;
+        SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&TEXT("Mesh not loaded"));
         return;
     }
+    g_mesh_error = FALSE;
+
+    int total_vertices = 0;
+    int total_triangles = 0;
+    for (int i = 0; i < g_mesh.submesh_count; ++i) {
+        total_vertices += g_mesh.submeshes[i].point_count;
+        total_triangles += g_mesh.submeshes[i].triangle_count;
+    }
+    char vertices_string[20];
+    FormatNumberWithCommas(vertices_string, sizeof(vertices_string), total_vertices);
+    char triangles_string[20];
+    FormatNumberWithCommas(triangles_string, sizeof(triangles_string), total_triangles);
+    snprintf(status, sizeof(status), "Vertices: %s | Polygons: %s | Materials: %d", vertices_string, triangles_string, g_mesh.submesh_count);
+    SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&status);
+
     Viewport_CalculateBounds();
+}
+
+BOOL ExportLoadedMesh(HWND window, const char *path)
+{
+    if (!g_mesh_loaded) {
+        return FALSE;
+    }
+
+    HANDLE obj_file = CreateFile(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (obj_file == INVALID_HANDLE_VALUE) {
+        return FALSE;
+    }
+
+    TCHAR mtl_path[MAX_PATH];
+    strcpy(mtl_path, path);
+    PathRemoveExtension(mtl_path);
+    PathAddExtension(mtl_path, ".mtl");
+    HANDLE mtl_file = CreateFile(mtl_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    // Write .obj file
+    char buffer[1024];
+    snprintf(buffer, sizeof(buffer), "mtllib %s\n", PathFindFileName(mtl_path));
+    WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+    snprintf(buffer, sizeof(buffer), "o %s\n", PathFindFileName(g_mesh_path)); // write object name
+    WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+    int points_offset = 0;
+    for (int i = 0; i < g_mesh.submesh_count; ++i) {
+        MeshSubmesh submesh = g_mesh.submeshes[i];
+        snprintf(buffer, sizeof(buffer), "g %d\n", i+1);
+        WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        for (int j = 0; j < submesh.point_count; ++j) {
+            MeshPoint point = submesh.points[j];
+            snprintf(buffer, sizeof(buffer), "v %f %f %f\n", point.x, point.y, point.z);
+            WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        }
+        for (int j = 0; j < submesh.point_count; ++j) {
+            MeshPoint point = submesh.points[j];
+            snprintf(buffer, sizeof(buffer), "vt %f %f\n", point.u, 1.0f-point.v);
+            WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        }
+        snprintf(buffer, sizeof(buffer), "s 1\n", i); // enable smooth shading
+        WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        snprintf(buffer, sizeof(buffer), "usemtl %s\n", PathFindFileName(submesh.texture_path));
+        WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        for (int j = 0; j < submesh.triangle_count; ++j) {
+            MeshTriangle triangle = submesh.triangles[j];
+            snprintf(buffer, sizeof(buffer), "f %d/%d %d/%d %d/%d\n",
+                points_offset + triangle.a+1, points_offset + triangle.a+1,
+                points_offset + triangle.b+1, points_offset + triangle.b+1,
+                points_offset + triangle.c+1, points_offset + triangle.c+1);
+            WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
+        }
+        points_offset += submesh.point_count;
+    }
+    // Write .mtl file
+    for (int i = 0; i < g_mesh.submesh_count; ++i) {
+        MeshSubmesh submesh = g_mesh.submeshes[i];
+        snprintf(buffer, sizeof(buffer), "newmtl %s\n", PathFindFileName(submesh.texture_path));
+        WriteFile(mtl_file, buffer, strlen(buffer), NULL, NULL);
+        if (submesh.texture.data != fallback_texture.data) { // do not write texture for fallback material
+            snprintf(buffer, sizeof(buffer), "map_Kd %s\n", submesh.texture_path);
+            WriteFile(mtl_file, buffer, strlen(buffer), NULL, NULL);
+        }
+    }
+
+    CloseHandle(obj_file);
+    CloseHandle(mtl_file);
+
+    return TRUE;
 }
 
 BOOL GenerateCheckerboardTexture(Texture *output, int width, int height, int pattern_size, DWORD color1, DWORD color2)
@@ -102,7 +283,7 @@ BOOL GenerateCheckerboardTexture(Texture *output, int width, int height, int pat
     return TRUE;
 }
 
-void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
+void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL draw_transparency)
 {
     // Precompute screen-related values
     PrecomputeRenderingVariables();
@@ -157,12 +338,15 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
             //
             // Clipping
             //
+            // TODO: Clipping is disabled until I resolve mesh scale issues
+            /*
             MeshPoint splits[CLIP_MAX_POINTS] = { a, b, c };
             int splits_count = ClipTriangle(splits, NEAR_CLIP);
             for (int i2 = 0; i2 < splits_count; ++i2) {
                 a = splits[(i2 * 3) + 0];
                 b = splits[(i2 * 3) + 1];
                 c = splits[(i2 * 3) + 2];
+            */
 
                 // Perspective divide
                 a.x /= a.z;
@@ -186,7 +370,7 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
                 c.y = (0.5f + c.y) * g_screen_dimension + g_screen_dimension_offset_y;
 
                 if (draw_faces) {
-                    DrawTriangle(submesh.texture,
+                    DrawTriangle(submesh.texture, draw_transparency,
                                  a.x, a.y, a.z, a.u, a.v,
                                  b.x, b.y, b.z, b.u, b.v,
                                  c.x, c.y, c.z, c.u, c.v);
@@ -196,7 +380,9 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces)
                     DrawLine(b.x, b.y, c.x, c.y, 0x999922);
                     DrawLine(c.x, c.y, a.x, a.y, 0x999922);
                 }
+            /*
             }
+            */
         }
     }
 
@@ -254,6 +440,19 @@ BOOL FileSelectDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR
     return GetOpenFileName(&dialog_params);
 }
 
+BOOL FileOpenDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR filter)
+{
+    OPENFILENAME dialog_params;
+    ZeroMemory(&dialog_params, sizeof(OPENFILENAME));
+    dialog_params.lStructSize = sizeof(OPENFILENAME);
+    dialog_params.hwndOwner = parent;
+    dialog_params.lpstrFile = result;
+    dialog_params.nMaxFile = result_max;
+    dialog_params.lpstrFilter = filter;
+    dialog_params.Flags = OFN_PATHMUSTEXIST;
+    return GetSaveFileName(&dialog_params);
+}
+
 static BOOL WindowMenu_IsItemChecked(HMENU menu, UINT menu_item_id)
 {
     return (GetMenuState(menu, menu_item_id, MF_BYCOMMAND) & MF_CHECKED) == MF_CHECKED;
@@ -267,16 +466,6 @@ static void WindowMenu_ToggleItem(HMENU menu, UINT menu_item_id)
 
 BOOL Window_Create(HWND window)
 {
-    // Initialize buffers
-    g_screen_color = HeapAlloc(GetProcessHeap(), 0, g_screen_width * g_screen_height * sizeof(DWORD));
-    if (!g_screen_color) {
-        return FALSE;
-    }
-    g_screen_depth = HeapAlloc(GetProcessHeap(), 0, g_screen_width * g_screen_height * sizeof(float));
-    if (!g_screen_depth) {
-        return FALSE;
-    }
-
     // Initialize fallback texture
     GenerateCheckerboardTexture(&fallback_texture, 64, 64, 8, 0xFF000000, 0xFFFF00FF);
 
@@ -285,17 +474,29 @@ BOOL Window_Create(HWND window)
     HMENU menu_file = CreatePopupMenu();
     AppendMenu(menu_file, MF_STRING, MENU_ITEM_ID_OPEN, "&Open...");
     AppendMenu(menu_file, MF_SEPARATOR, 0, NULL);
+    AppendMenu(menu_file, MF_STRING, MENU_ITEM_ID_EXPORT_OBJ, "&Export as .OBJ...");
+    AppendMenu(menu_file, MF_SEPARATOR, 0, NULL);
     AppendMenu(menu_file, MF_STRING, MENU_ITEM_ID_EXIT, TEXT("E&xit"));
     AppendMenu(g_menu, MF_POPUP, (UINT_PTR)menu_file, "File");
     HMENU menu_view = CreatePopupMenu();
     AppendMenu(menu_view, MF_STRING, MENU_ITEM_ID_DRAW_WIREFRAME, "Draw wireframe\tF2");
     AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_POINTS, "Draw points\tF3");
     AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_FACES, "Draw faces\tF4");
+    AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_TRANSPARENCY, "Draw transparency\tF5");
     AppendMenu(g_menu, MF_POPUP, (UINT_PTR)menu_view, "View");
     HMENU menu_help = CreatePopupMenu();
     AppendMenu(menu_help, MF_STRING, MENU_ITEM_ID_HELP, "About\tF1");
     AppendMenu(g_menu, MF_POPUP, (UINT_PTR)menu_help, "Help");
     SetMenu(window, g_menu);
+
+    // Create statusbar
+    g_statusbar = CreateStatusWindow(WS_CHILD | WS_VISIBLE, NULL, window, IDC_STATUSBAR);
+    if (g_statusbar == INVALID_HANDLE_VALUE) {
+        return FALSE;
+    }
+    int parts[] = { -1 };
+    SendMessage(g_statusbar, SB_SETPARTS, ARRAYSIZE(parts), (LPARAM)parts);
+    SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&TEXT("Mesh not loaded"));
 
     // Allow to drag and drop files to window
     DragAcceptFiles(window, TRUE);
@@ -305,7 +506,7 @@ BOOL Window_Create(HWND window)
 
 void ShowHelp(HWND window)
 {
-    MessageBox(window, TEXT("For the latest updates, visit: https://github.com/koshkokoshka/pathologic-mesh-viewer"), TEXT("Help"), MB_OK | MB_ICONINFORMATION);
+    MessageBox(window, TEXT(APP_NAME"\n\nFor the latest updates, visit: https://github.com/koshkokoshka/pathologic-mesh-viewer"), TEXT("Help"), MB_OK | MB_ICONINFORMATION);
 }
 
 void Window_OnKeyDown(HWND window, WPARAM w_param)
@@ -315,6 +516,27 @@ void Window_OnKeyDown(HWND window, WPARAM w_param)
         case VK_F2: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_WIREFRAME); break;
         case VK_F3: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_POINTS); break;
         case VK_F4: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_FACES); break;
+        case VK_F5: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_TRANSPARENCY); break;
+        case VK_LEFT: {
+            char path[MAX_PATH];
+            int prev_file_number = g_mesh_directory_file_number-1;
+            if (prev_file_number < 0) {
+                prev_file_number = g_mesh_directory_files_count-1; // loop directory
+            }
+            wsprintf(path, "%s\\%s", g_mesh_directory, g_mesh_directory_files[prev_file_number].name);
+            TryLoadMesh(window, path);
+            break;
+        }
+        case VK_RIGHT: {
+            char path[MAX_PATH];
+            int next_file_number = g_mesh_directory_file_number+1;
+            if (next_file_number > g_mesh_directory_files_count-1) {
+                next_file_number = 0; // loop directory
+            }
+            wsprintf(path, "%s\\%s", g_mesh_directory, g_mesh_directory_files[next_file_number].name);
+            TryLoadMesh(window, path);
+            break;
+        }
         default: return; // do not redraw window
     }
     RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
@@ -326,17 +548,36 @@ void Window_OnCommand(HWND window, WPARAM w_param)
         case MENU_ITEM_ID_DRAW_WIREFRAME:
         case MENU_ITEM_ID_DRAW_POINTS:
         case MENU_ITEM_ID_DRAW_FACES:
+        case MENU_ITEM_ID_DRAW_TRANSPARENCY:
             WindowMenu_ToggleItem(g_menu, w_param);
             RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
             break;
-        case MENU_ITEM_ID_OPEN:
+        case MENU_ITEM_ID_OPEN: {
             TCHAR path[MAX_PATH];
             path[0] = '\0';
-            if (FileSelectDialog_Show(path, sizeof(path), window, "Pathologic 3D mesh data (.mesh)\0*.mesh\0\0")) {
+            if (FileSelectDialog_Show(path, sizeof(path), window, "Pathologic game model (.mesh)\0*.mesh\0\0")) {
                 TryLoadMesh(window, path);
             }
             RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
             break;
+        }
+        case MENU_ITEM_ID_EXPORT_OBJ: {
+            if (!g_mesh_loaded) {
+                MessageBox(window, TEXT("To export .obj file you must load .mesh file first"), TEXT("Mesh not loaded"), MB_OK | MB_ICONWARNING);
+                return;
+            }
+            TCHAR path[MAX_PATH];
+            path[0] = '\0';
+            strcpy(path, PathFindFileName(g_mesh_path));
+            PathRemoveExtension(path);
+            PathAddExtension(path, ".obj");
+            if (FileOpenDialog_Show(path, sizeof(path), window, "Wavefront OBJ (.obj)\0*.obj\0\0")) {
+                if (!ExportLoadedMesh(window, path)) {
+                    MessageBox(window, TEXT("Failed to export .OBJ file"), TEXT("Export failed"), MB_OK | MB_ICONERROR);
+                }
+            }
+            break;
+        }
         case MENU_ITEM_ID_EXIT:
             PostQuitMessage(0);
             break;
@@ -393,7 +634,8 @@ void Window_OnPaint(HWND window)
     BOOL draw_wireframe = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_WIREFRAME);
     BOOL draw_points = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_POINTS);
     BOOL draw_faces = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_FACES);
-    Viewport_Draw(draw_wireframe, draw_points, draw_faces);
+    BOOL draw_transparency = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_TRANSPARENCY);
+    Viewport_Draw(draw_wireframe, draw_points, draw_faces, draw_transparency);
 
     BITMAPINFO bmi;
     ZeroMemory(&bmi, sizeof(BITMAPINFO));
@@ -422,9 +664,6 @@ void Window_OnPaint(HWND window)
             DrawText(ps.hdc, TEXT("Select Pathologic .mesh with drag-and-drop or File -> Open..."), -1, &client_rect, DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         }
     }
-    if (g_mesh_path != NULL) {
-        DrawText(ps.hdc, g_mesh_path, -1, &client_rect, DT_RIGHT);
-    }
 
     EndPaint(window, &ps);
 }
@@ -441,6 +680,35 @@ LRESULT CALLBACK Window_Process(HWND window, UINT message, WPARAM w_param, LPARA
 
         case WM_DESTROY:
             PostQuitMessage(0);
+            return 0;
+
+        case WM_SIZE:
+            SendMessage(g_statusbar, WM_SIZE, 0, 0); // auto-size statusbar
+
+            RECT client_rect;
+            GetClientRect(window, &client_rect);
+
+            g_screen_width = client_rect.right - client_rect.left;
+            g_screen_height = client_rect.bottom - client_rect.top;
+
+            static SIZE_T g_screen_buffer_size = 0;
+
+            SIZE_T buffer_size = g_screen_width * g_screen_height;
+
+            if (g_screen_color == NULL || g_screen_depth == NULL) {
+                g_screen_color = HeapAlloc(GetProcessHeap(), 0, buffer_size * sizeof(DWORD));
+                g_screen_depth = HeapAlloc(GetProcessHeap(), 0, buffer_size * sizeof(float));
+                g_screen_buffer_size = buffer_size;
+            } else {
+                if (buffer_size > g_screen_buffer_size) {
+                    g_screen_color = HeapReAlloc(GetProcessHeap(), 0, g_screen_color, buffer_size * sizeof(DWORD));
+                    g_screen_depth = HeapReAlloc(GetProcessHeap(), 0, g_screen_depth, buffer_size * sizeof(float));
+                    g_screen_buffer_size = buffer_size;
+                }
+            }
+            if (g_screen_color == NULL || g_screen_depth == NULL) { return 1; }
+
+            RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
             return 0;
 
         case WM_COMMAND:
@@ -494,7 +762,6 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
     if (CoInitialize(NULL) != S_OK) {
         return 1;
     }
-
     // Initialize WIC library
     if (CoCreateInstance(&CLSID_WICImagingFactory, NULL, CLSCTX_INPROC, &IID_IWICImagingFactory, (LPVOID*)&g_wic_factory) != S_OK) {
         return 1;
@@ -513,21 +780,11 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
         return 1;
     }
 
-    // Define window styles
-    DWORD window_style = WS_OVERLAPPEDWINDOW & ~WS_MAXIMIZEBOX & ~WS_SIZEBOX;
-
-    RECT window_rect = { 0, 0, g_screen_width, g_screen_height };
-    if (AdjustWindowRect(&window_rect, window_style, FALSE)) {
-        window_rect.right -= window_rect.left;
-        window_rect.bottom -= window_rect.top;
-        window_rect.left = (GetSystemMetrics(SM_CXSCREEN) - window_rect.right) / 2;
-        window_rect.top = (GetSystemMetrics(SM_CYSCREEN) - window_rect.bottom) / 2;
-    }
-
     // Create window
     HWND window = CreateWindowEx(
-        WS_EX_COMPOSITED, window_class.lpszClassName, TEXT("Pathologic Mesh Viewer v0.4"), window_style,
-        window_rect.left, window_rect.top, window_rect.right, window_rect.bottom,
+        WS_EX_COMPOSITED, window_class.lpszClassName,
+        TEXT(APP_NAME), WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
         NULL, NULL, hInstance, NULL);
     if (window == INVALID_HANDLE_VALUE) {
         return 1;

@@ -80,9 +80,11 @@ BOOL Mesh_ReadSubmeshHeader(OUT SubmeshHeader *submesh_header, HANDLE file, DWOR
             char unknown_4;
             if (!ReadFile(file, &unknown_4, sizeof(char), NULL, NULL)) { return FALSE; }
         }
-        if (submesh_header->material_type & 0b00000100) {
+        if (submesh_header->material_type == 5) {
+            char unknown_4;
+            if (!ReadFile(file, &unknown_4, sizeof(char), NULL, NULL)) { return FALSE; }
             float unknown_4floats[4];
-            if (!ReadFile(file, unknown_4floats, sizeof(float) * 4, NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, unknown_4floats, sizeof(unknown_4floats), NULL, NULL)) { return FALSE; }
         }
     }
 
@@ -99,7 +101,7 @@ BOOL Mesh_ReadSubmeshHeader(OUT SubmeshHeader *submesh_header, HANDLE file, DWOR
     if (!ReadFile(file, unknown_19floats, sizeof(float) * 19, NULL, NULL)) { return FALSE; }
 
     // ??? unknown blocks
-    if (submesh_header->material_type == 0 || submesh_header->material_type == 1 || submesh_header->material_type == 17) {
+    if (submesh_header->material_type == 0 || submesh_header->material_type == 5 || submesh_header->material_type == 1 || submesh_header->material_type == 17) {
         int unknown_blocks_count;
         if (!ReadFile(file, &unknown_blocks_count, sizeof(int), NULL, NULL)) { return FALSE; }
         // Sanity check
@@ -135,6 +137,8 @@ BOOL Mesh_ReadSubmeshHeader(OUT SubmeshHeader *submesh_header, HANDLE file, DWOR
             }
         }
     }
+
+    return TRUE;
 }
 
 BOOL FindTexturePath(char *output, const char *texture_name, const char *file_path)
@@ -163,7 +167,9 @@ BOOL Mesh_ReadMethod6(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
     SubmeshHeader *submesh_headers = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(SubmeshHeader) * submesh_count);
     for (int i = 0; i < submesh_count; ++i) {
         SubmeshHeader *submesh_header = &submesh_headers[i];
-        Mesh_ReadSubmeshHeader(submesh_header, file, file_size); // read every submesh header block
+        if (!Mesh_ReadSubmeshHeader(submesh_header, file, file_size)) { // read every submesh header block
+            return FALSE;
+        }
     }
 
     // Load all textures specified in submesh headers
@@ -172,15 +178,14 @@ BOOL Mesh_ReadMethod6(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
 
         if (header->material_type != 0) {
 
+            MeshSubmesh *submesh = &mesh->submeshes[i];
+
             // Find texture path
-            char texture_path[MAX_PATH];
-            if (!FindTexturePath(texture_path, header->texture_name, file_path)) {
+            if (!FindTexturePath(submesh->texture_path, header->texture_name, file_path)) {
                 return FALSE;
             }
-
             // Load texture
-            MeshSubmesh *submesh = &mesh->submeshes[i];
-            if (!Texture_Load(&submesh->texture, texture_path)) {
+            if (!Texture_Load(&submesh->texture, submesh->texture_path)) {
                 submesh->texture = fallback_texture; // use fallback texture
             }
         }
@@ -243,6 +248,15 @@ BOOL Mesh_ReadMethod6(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
                 point->u = u;
                 point->v = v;
             }
+            if (submesh_header->material_type == 5) {
+                int unknown_1;
+                if (!ReadFile(file, &unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+                float u, v;
+                if (!ReadFile(file, &u, sizeof(float), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &v, sizeof(float), NULL, NULL)) { return FALSE; }
+                point->u = u;
+                point->v = v;
+            }
             if (submesh_header->material_type == 17) {
                 int unknown_1;
                 if (!ReadFile(file, &unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
@@ -277,10 +291,10 @@ BOOL Mesh_ReadMethod6(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
             if (!ReadFile(file, &v2, sizeof(unsigned short), NULL, NULL)) { return FALSE; }
             if (!ReadFile(file, &v3, sizeof(unsigned short), NULL, NULL)) { return FALSE; }
 
-            // Sanity checks
-            if (v1 >= submesh->point_count) { return FALSE; }
-            if (v2 >= submesh->point_count) { return FALSE; }
-            if (v3 >= submesh->point_count) { return FALSE; }
+            // Validate indices bounds
+            if (v1 < 0 || v1 >= submesh->point_count) { return FALSE; }
+            if (v2 < 0 || v2 >= submesh->point_count) { return FALSE; }
+            if (v3 < 0 || v3 >= submesh->point_count) { return FALSE; }
 
             triangle->a = v1;
             triangle->b = v2;
@@ -311,6 +325,324 @@ BOOL Mesh_ReadMethod6(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
                     }
                 }
             }
+        }
+    }
+
+    return TRUE;
+}
+
+/**
+ * Related to Method 4
+ */
+typedef struct {
+    struct {
+        BYTE unknown_1;
+        float unknown_2;
+        float unknown_3;
+        float unknown_4;
+        float unknown_5;
+    } unknown_1;
+    int index;
+    struct {
+        int unknown_1_count;
+        struct {
+            int unknown_1;
+            int unknown_2;
+        } unknown_1; // unknown_1[unknown_1_count]
+        float unknown_2;
+        float unknown_3;
+        float unknown_4;
+    } unknown_2;
+    int unknown_3_length;
+    char *unknown_3;
+    int unknown_4_length;
+    int *unknown_4;
+    int unknown_5_count;
+    struct {
+        float unknown_1;
+        float unknown_2;
+        float unknown_3;
+        float unknown_4;
+        float unknown_5;
+        float unknown_6;
+        float unknown_7;
+        float unknown_8;
+        float unknown_9;
+    } unknown_5_1; // unknown_5_1[unknown_5_count]
+    byte unknown_5_2; // unknown_5_2[unknown_5_count]
+} Block1;
+
+/**
+ * Related to Method 4
+ */
+typedef struct {
+    int triangles_count_1;
+    int unknown_1; // usually equals to "1", purpose is unknown
+    BYTE texture_name_length;
+    char texture_name[MAX_PATH]; // texture_name[texture_name_length]
+    int triangles_count_2;
+    BYTE vertices_type; // 0 - float, 1 - short
+    float unknown_4; // probably world xyz coordinates
+    float unknown_5;
+    float unknown_6;
+    struct {
+        union {
+            struct { float x, y, z; } pos_float;
+            struct { short x, y, z; } pos_short;
+        };
+        char unknown_1[4];
+        float u, v;
+    } *vertices; // vertices[triangles_count_2 * 3]
+} Block3;
+
+/**
+ * Related to Method 4
+ */
+typedef struct {
+    int unknown_1;
+    int unknown_2;
+    int unknown_3_length;
+    char *unknown_3;
+    int unknown_4_length;
+    char *unknown_4;
+    int unknown_5_count;
+    struct {
+        short unknown_1;
+        float unknown_2;
+        float unknown_3;
+        float unknown_4;
+        float unknown_5;
+    } unknown_5;
+    float unknown_6;
+    struct {
+        int unknown_1;
+        int unknown_2;
+    } unknown_7; // unknown_7[triangles_count]
+} Block4;
+
+/**
+ * Method 4:
+ *
+ * Examples
+ * - ihouse_kabak.mesh
+ * - warehouse1.mesh
+ * - theater_indoor.mesh
+ */
+BOOL Mesh_ReadMethod4(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *file_path)
+{
+    //
+    // Read "Block 1" data (purpose of this block is unclean, perhaps objects, particles, or lighting data)
+    //
+
+    // Read block count
+    int block1_count;
+    if (!ReadFile(file, &block1_count, sizeof(int), NULL, NULL)) { return FALSE; }
+    if (block1_count * sizeof(Block1) > file_size) { return FALSE; } // overflow check
+
+    // Read blocks data
+    Block1 block1;
+    for (int i1 = 0; i1 < block1_count; ++i1) {
+
+        // Read "block1.unknown_1" block until "block1.unknown_1.unknown_1" is not 0
+        while (1) {
+            if (!ReadFile(file, &block1.unknown_1.unknown_1, sizeof(BYTE), NULL, NULL)) { return FALSE; }
+            if (block1.unknown_1.unknown_1 == 0) {
+                break; // done reading
+            }
+
+            if (!ReadFile(file, &block1.unknown_1.unknown_2, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_1.unknown_3, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_1.unknown_4, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_1.unknown_5, sizeof(float), NULL, NULL)) { return FALSE; }
+        }
+
+        // Read current block index
+        if (!ReadFile(file, &block1.index, sizeof(int), NULL, NULL)) { return FALSE; } // read current block index
+        // Safety check: block index specified in the file should match the currently reading block index
+        if (block1.index != i1) {
+            return FALSE; // indices do not match
+        }
+
+        // Read "block1.unknown_2" block
+        if (!ReadFile(file, &block1.unknown_2.unknown_1_count, sizeof(int), NULL, NULL)) { return FALSE; }
+        for (int i2 = 0; i2 < block1.unknown_2.unknown_1_count; ++i2) {
+            if (!ReadFile(file, &block1.unknown_2.unknown_1.unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_2.unknown_1.unknown_2, sizeof(int), NULL, NULL)) { return FALSE; }
+        }
+        if (!ReadFile(file, &block1.unknown_2.unknown_2, sizeof(float), NULL, NULL)) { return FALSE; }
+        if (!ReadFile(file, &block1.unknown_2.unknown_3, sizeof(float), NULL, NULL)) { return FALSE; }
+        if (!ReadFile(file, &block1.unknown_2.unknown_4, sizeof(float), NULL, NULL)) { return FALSE; }
+
+        if (!ReadFile(file, &block1.unknown_3_length, sizeof(int), NULL, NULL)) { return FALSE; }
+        SetFilePointer(file, block1.unknown_3_length * sizeof(block1.unknown_3[0]), NULL, FILE_CURRENT); // skip unknown data
+        if (!ReadFile(file, &block1.unknown_4_length, sizeof(int), NULL, NULL)) { return FALSE; }
+        SetFilePointer(file, block1.unknown_4_length * sizeof(block1.unknown_4[0]), NULL, FILE_CURRENT); // skip unknown data
+
+        // Read "block1.unknown_5" block
+        if (!ReadFile(file, &block1.unknown_5_count, sizeof(int), NULL, NULL)) { return FALSE; }
+        if (block1.unknown_5_count * sizeof(block1.unknown_5_1) > file_size) { return FALSE; } // overflow check
+        for (int i2 = 0; i2 < block1.unknown_5_count; ++i2) {
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_1, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_2, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_3, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_4, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_5, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_6, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_7, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_8, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block1.unknown_5_1.unknown_9, sizeof(float), NULL, NULL)) { return FALSE; }
+        }
+        for (int i2 = 0; i2 < block1.unknown_5_count; ++i2) {
+            if (!ReadFile(file, &block1.unknown_5_2, sizeof(BYTE), NULL, NULL)) { return FALSE; }
+        }
+    }
+
+    //
+    // Read "Block 2" data
+    //
+    int block2_count;
+    if (!ReadFile(file, &block2_count, sizeof(int), NULL, NULL)) { return FALSE; }
+
+    int unknown_1; // unknown values that somehow corresponding with "Block 2" data
+    for (int i = 0; i < block2_count; ++i) {
+        if (!ReadFile(file, &unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+    }
+
+    //
+    // Read "Block 2" data
+    //
+    int block3_count;
+    if (!ReadFile(file, &block3_count, sizeof(int), NULL, NULL)) { return FALSE; }
+    if (block3_count * sizeof(Block3) > file_size) { return FALSE; } // overflow check
+
+    Block3 *blocks3 = HeapAlloc(GetProcessHeap(), 0, block3_count * sizeof(Block3));
+    for (int i1 = 0; i1 < block3_count; ++i1) {
+        Block3 *block3 = &blocks3[i1];
+
+        if (!ReadFile(file, &block3->triangles_count_1, sizeof(int), NULL, NULL)) { return FALSE; }
+        if (!ReadFile(file, &block3->unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+
+        if (!ReadFile(file, &block3->texture_name_length, sizeof(BYTE), NULL, NULL)) { return FALSE; }
+        if (!ReadFile(file, &block3->texture_name, block3->texture_name_length, NULL, NULL)) { return FALSE; }
+        block3->texture_name[block3->texture_name_length] = 0;
+
+        if (!ReadFile(file, &block3->triangles_count_2, sizeof(int), NULL, NULL)) { return FALSE; }
+        if (!ReadFile(file, &block3->vertices_type, sizeof(BYTE), NULL, NULL)) { return FALSE; }
+        if (block3->vertices_type == 1) {
+            if (!ReadFile(file, &block3->unknown_4, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block3->unknown_5, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block3->unknown_6, sizeof(float), NULL, NULL)) { return FALSE; }
+        }
+
+        int vertices_count = block3->triangles_count_2 * 3;
+        if (vertices_count * sizeof(block3->vertices[0]) > file_size) { return FALSE; } // overflow check
+        block3->vertices = HeapAlloc(GetProcessHeap(), 0, vertices_count * sizeof(block3->vertices[0]));
+        if (block3->vertices == NULL) { return FALSE; }
+        for (int i2 = 0; i2 < vertices_count; ++i2) {
+            if (block3->vertices_type == 1) {
+                if (!ReadFile(file, &block3->vertices[i2].pos_short.x, sizeof(short), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block3->vertices[i2].pos_short.y, sizeof(short), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block3->vertices[i2].pos_short.z, sizeof(short), NULL, NULL)) { return FALSE; }
+            } else {
+                if (!ReadFile(file, &block3->vertices[i2].pos_float.x, sizeof(float), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block3->vertices[i2].pos_float.y, sizeof(float), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block3->vertices[i2].pos_float.z, sizeof(float), NULL, NULL)) { return FALSE; }
+            }
+            if (!ReadFile(file, &block3->vertices[i2].unknown_1, sizeof(block3->vertices[i2].unknown_1), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block3->vertices[i2].u, sizeof(float), NULL, NULL)) { return FALSE; }
+            if (!ReadFile(file, &block3->vertices[i2].v, sizeof(float), NULL, NULL)) { return FALSE; }
+        }
+
+        for (int i2 = 0; i2 < block2_count; ++i2) {
+            int block4_count;
+            if (!ReadFile(file, &block4_count, sizeof(int), NULL, NULL)) { return FALSE; }
+            if (block4_count <= 0) {
+                continue; // read the next data only if "block4_count" value greater than zero
+            }
+
+            if (block4_count * sizeof(Block4) > file_size) { return FALSE; } // overflow check
+
+            Block4 block4;
+            for (int i3 = 0; i3 < block4_count; ++i3) {
+                if (!ReadFile(file, &block4.unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block4.unknown_2, sizeof(int), NULL, NULL)) { return FALSE; }
+
+                if (!ReadFile(file, &block4.unknown_3_length, sizeof(int), NULL, NULL)) { return FALSE; }
+                SetFilePointer(file, block4.unknown_3_length, NULL, FILE_CURRENT); // skip unknown data
+
+                if (!ReadFile(file, &block4.unknown_4_length, sizeof(int), NULL, NULL)) { return FALSE; }
+                SetFilePointer(file, block4.unknown_4_length, NULL, FILE_CURRENT); // skip unknown data
+
+                if (!ReadFile(file, &block4.unknown_5_count, sizeof(int), NULL, NULL)) { return FALSE; } // note that this value is multiplied by 3 for the following loop
+                for (int i4 = 0; i4 < block4.unknown_5_count * 3; ++i4) {
+                    if (!ReadFile(file, &block4.unknown_5.unknown_1, sizeof(short), NULL, NULL)) { return FALSE; }
+                    if (!ReadFile(file, &block4.unknown_5.unknown_2, sizeof(float), NULL, NULL)) { return FALSE; }
+                    if (!ReadFile(file, &block4.unknown_5.unknown_3, sizeof(float), NULL, NULL)) { return FALSE; }
+                    if (!ReadFile(file, &block4.unknown_5.unknown_4, sizeof(float), NULL, NULL)) { return FALSE; }
+                    if (!ReadFile(file, &block4.unknown_5.unknown_5, sizeof(float), NULL, NULL)) { return FALSE; }
+                }
+                if (!ReadFile(file, &block4.unknown_6, sizeof(float), NULL, NULL)) { return FALSE; }
+            }
+
+            for (int i3 = 0; i3 < block3->triangles_count_2; ++i3) {
+                if (!ReadFile(file, &block4.unknown_7.unknown_1, sizeof(int), NULL, NULL)) { return FALSE; }
+                if (!ReadFile(file, &block4.unknown_7.unknown_2, sizeof(int), NULL, NULL)) { return FALSE; }
+            }
+        }
+    }
+
+    //
+    // Unpack read data
+    //
+    mesh->submesh_count = block3_count;
+    mesh->submeshes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(MeshSubmesh) * mesh->submesh_count);
+    if (mesh->submeshes == NULL) {
+        return FALSE;
+    }
+
+    // Load textures first
+    for (int i1 = 0; i1 < mesh->submesh_count; ++i1) {
+        MeshSubmesh *submesh = &mesh->submeshes[i1];
+        Block3 *block3 = &blocks3[i1];
+
+        if (   !FindTexturePath(submesh->texture_path, block3->texture_name, file_path)
+            || !Texture_Load(&submesh->texture, submesh->texture_path)) {
+            submesh->texture = fallback_texture; // use fallback texture
+        }
+    }
+
+    for (int i1 = 0; i1 < mesh->submesh_count; ++i1) {
+        MeshSubmesh *submesh = &mesh->submeshes[i1];
+        Block3 *block3 = &blocks3[i1];
+
+        submesh->point_count = block3->triangles_count_2 * 3;
+        submesh->points = HeapAlloc(GetProcessHeap(), 0, submesh->point_count * sizeof(MeshPoint));
+        if (submesh->points == NULL) {
+            return FALSE;
+        }
+        for (int i2 = 0; i2 < submesh->point_count; ++i2) {
+            if (block3->vertices_type == 1) {
+                submesh->points[i2].x = (float)block3->vertices[i2].pos_short.x / INT16_MAX; // unpack coordinates
+                submesh->points[i2].y = (float)block3->vertices[i2].pos_short.y / INT16_MAX;
+                submesh->points[i2].z = (float)block3->vertices[i2].pos_short.z / INT16_MAX;
+            } else {
+                submesh->points[i2].x = block3->vertices[i2].pos_float.x;
+                submesh->points[i2].y = block3->vertices[i2].pos_float.y;
+                submesh->points[i2].z = block3->vertices[i2].pos_float.z;
+            }
+            submesh->points[i2].u = block3->vertices[i2].u;
+            submesh->points[i2].v = block3->vertices[i2].v;
+        }
+
+        submesh->triangle_count = block3->triangles_count_2;
+        submesh->triangles = HeapAlloc(GetProcessHeap(), 0, submesh->triangle_count * sizeof(MeshTriangle));
+        if (submesh->triangles == NULL) {
+            return FALSE;
+        }
+        for (int i2 = 0; i2 < submesh->triangle_count; ++i2) {
+            submesh->triangles[i2].a = ((i2 * 3) + 0) % submesh->point_count; // calculate indices
+            submesh->triangles[i2].b = ((i2 * 3) + 1) % submesh->point_count;
+            submesh->triangles[i2].c = ((i2 * 3) + 2) % submesh->point_count;
         }
     }
 
@@ -374,6 +706,13 @@ BOOL Mesh_ReadMethod1(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
         if (!ReadFile(file, &indices[i].a, sizeof(short), NULL, NULL)) { return FALSE; }
         if (!ReadFile(file, &indices[i].b, sizeof(short), NULL, NULL)) { return FALSE; }
         if (!ReadFile(file, &indices[i].c, sizeof(short), NULL, NULL)) { return FALSE; }
+    }
+
+    // Validate indices bounds
+    for (int i = 0; i < indices_count; ++i) {
+        if (indices[i].a < 0 || indices[i].a >= vertices_count) { return FALSE; }
+        if (indices[i].b < 0 || indices[i].b >= vertices_count) { return FALSE; }
+        if (indices[i].c < 0 || indices[i].c >= vertices_count) { return FALSE; }
     }
 
     float unknown_1[3];
@@ -473,6 +812,13 @@ BOOL Mesh_ReadMethod2(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
         if (!ReadFile(file, &indices[i].c, sizeof(short), NULL, NULL)) { return FALSE; }
     }
 
+    // Validate indices bounds
+    for (int i = 0; i < indices_count; ++i) {
+        if (indices[i].a < 0 || indices[i].a >= vertices_count) { return FALSE; }
+        if (indices[i].b < 0 || indices[i].b >= vertices_count) { return FALSE; }
+        if (indices[i].c < 0 || indices[i].c >= vertices_count) { return FALSE; }
+    }
+
     // Read texture name
     BYTE texture_name_length;
     BYTE texture_name[0xFF];
@@ -511,9 +857,8 @@ BOOL Mesh_ReadMethod2(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
     }
 
     // Find texture path and load texture
-    char texture_path[MAX_PATH];
-    FindTexturePath(texture_path, texture_name, file_path);
-    if (!Texture_Load(&submesh->texture, texture_path)) {
+    FindTexturePath(submesh->texture_path, texture_name, file_path);
+    if (!Texture_Load(&submesh->texture, submesh->texture_path)) {
         submesh->texture = fallback_texture; // use fallback texture
     }
 
@@ -641,6 +986,13 @@ BOOL Mesh_ReadMethod5(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
         if (!ReadFile(file, &indices[i].c, sizeof(short), NULL, NULL)) { return FALSE; }
     }
 
+    // Validate indices bounds
+    for (int i = 0; i < indices_count; ++i) {
+        if (indices[i].a < 0 || indices[i].a >= vertices_count) { return FALSE; }
+        if (indices[i].b < 0 || indices[i].b >= vertices_count) { return FALSE; }
+        if (indices[i].c < 0 || indices[i].c >= vertices_count) { return FALSE; }
+    }
+
     if (!ReadFile(file, &unknown_11, sizeof(float), NULL, NULL)) { return FALSE; }
     if (!ReadFile(file, &unknown_12, sizeof(float), NULL, NULL)) { return FALSE; }
     if (!ReadFile(file, &unknown_13, sizeof(float), NULL, NULL)) { return FALSE; }
@@ -674,9 +1026,8 @@ BOOL Mesh_ReadMethod5(OUT Mesh *mesh, HANDLE file, DWORD file_size, const char *
     }
 
     // Find texture path and load texture
-    char texture_path[MAX_PATH];
-    FindTexturePath(texture_path, texture_name, file_path);
-    if (!Texture_Load(&submesh->texture, texture_path)) {
+    FindTexturePath(submesh->texture_path, texture_name, file_path);
+    if (!Texture_Load(&submesh->texture, submesh->texture_path)) {
         submesh->texture = fallback_texture; // use fallback texture
     }
 
@@ -702,14 +1053,19 @@ BOOL Mesh_Read(OUT Mesh *mesh, HANDLE file, const char *file_path)
     if (first_value == 0) {
         return Mesh_ReadMethod6(mesh, file, file_size, file_path);
     } else {
-        BOOL success = Mesh_ReadMethod1(mesh, file, file_size, file_path); // try method 1
+        BOOL success = Mesh_ReadMethod4(mesh, file, file_size, file_path); // try method 4
         if (!success) {
-            // If previous method falied, reset file pointer and try method 2
+            // If previous method failed, reset file pointer and try method 1
+            SetFilePointer(file, 0, NULL, FILE_BEGIN);
+            success = Mesh_ReadMethod1(mesh, file, file_size, file_path);
+        }
+        if (!success) {
+            // If previous method failed, reset file pointer and try method 2
             SetFilePointer(file, 0, NULL, FILE_BEGIN);
             success = Mesh_ReadMethod2(mesh, file, file_size, file_path);
         }
         if (!success) {
-            // If previous method falied, reset file pointer and try method 5
+            // If previous method failed, reset file pointer and try method 5
             SetFilePointer(file, 0, NULL, FILE_BEGIN);
             success = Mesh_ReadMethod5(mesh, file, file_size, file_path);
         }

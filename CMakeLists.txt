@@ -14,4 +14,4 @@ add_executable(pathologic_mesh_viewer WIN32
         src/load_texture.c
         src/app.rc
 )
-target_link_libraries(pathologic_mesh_viewer Shlwapi.lib Windowscodecs)
+target_link_libraries(pathologic_mesh_viewer Comctl32.lib Shlwapi.lib Windowscodecs)

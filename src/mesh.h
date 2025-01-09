@@ -16,6 +16,7 @@ typedef struct {
 
 typedef struct {
     Texture texture;
+    char texture_path[MAX_PATH];
     int point_count;
     MeshPoint *points;
     int triangle_count;

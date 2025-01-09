@@ -4,10 +4,7 @@ A 3D model viewer for Pathologic Classic HD that supports the .mesh file format 
 
 ![screenshot](screenshot.png)
 
-This tool makes possible to load and explore the game's 3D assets.
-
 > **Note:** Pathologic Mesh Viewer is still under development and may not fully support every `.mesh` file from the game.
-
 
 ## How to Use
 
@@ -23,6 +20,8 @@ This tool makes possible to load and explore the game's 3D assets.
 ---
 
 ## Specification
+
+The goal of this project is to fully reverse-engineer the .mesh file structure used in the Pathologic game and its alpha version, to give the modding community abilify to extract, modify, and reimport game assets.
 
 ### .mesh file structure (NOT COMPLETE)
 

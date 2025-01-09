@@ -1,10 +1,10 @@
 #include "draw.h"
 
 // Screen buffer
-int g_screen_width = 640-2;
-int g_screen_height = 480-7-20;
-DWORD *g_screen_color;
-float *g_screen_depth;
+int g_screen_width;
+int g_screen_height;
+DWORD *g_screen_color = NULL;
+float *g_screen_depth = NULL;
 
 // Precomputed rendering variables
 float g_screen_dimension;

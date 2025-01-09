@@ -10,7 +10,7 @@
 //
 // Renderer constants
 //
-#define NEAR_CLIP 0.001f // note: setting too low may cause clipping problems
+#define NEAR_CLIP 0.0005f // note: setting too low may cause clipping problems
 
 //
 // Global draw variables
@@ -75,7 +75,7 @@ static void DrawLine(int x1, int y1, int x2, int y2, DWORD color)
     DrawLine_Unsafe(x1, y1, x2, y2, color);
 }
 
-void DrawTriangle(Texture texture,
+void DrawTriangle(Texture texture, BOOL transparency,
                   float ax, float ay, float z1, float u1, float v1,
                   float bx, float by, float z2, float u2, float v2,
                   float cx, float cy, float z3, float u3, float v3);

@@ -2,7 +2,7 @@
 
 #include <math.h>
 
-void DrawTriangle(Texture texture,
+void DrawTriangle(Texture texture, BOOL transparency,
                   float ax, float ay, float z1, float u1, float v1,
                   float bx, float by, float z2, float u2, float v2,
                   float cx, float cy, float z3, float u3, float v3)
@@ -22,13 +22,13 @@ void DrawTriangle(Texture texture,
     int max_x = (x1 > x2) ? ( (x1 > x3) ? x1 : x3 ) : ( (x2 > x3) ? x2 : x3 );
     int max_y = (y1 > y2) ? ( (y1 > y3) ? y1 : y3 ) : ( (y2 > y3) ? y2 : y3 );
 
-    // Clip to the screen
+    // Clip against screen bounds
     if (min_x < 0) { min_x = 0; }
     if (max_x > g_screen_width) { max_x = g_screen_width; }
     if (min_y < 0) { min_y = 0; }
     if (max_y > g_screen_height) { max_y = g_screen_height; }
 
-    // Set up edge functions
+    // Compute edge coefficients
     const int a12 = y2 - y3;
     const int b12 = x3 - x2;
     const int a23 = y3 - y1;
@@ -36,6 +36,7 @@ void DrawTriangle(Texture texture,
     const int a31 = y1 - y2;
     const int b31 = x2 - x1;
 
+    // Precompute initial edge values
     float w1_row = a12 * (min_x - x3) + b12 * (min_y - y3);
     float w2_row = a23 * (min_x - x1) + b23 * (min_y - y1);
     float w3_row = a31 * (min_x - x2) + b31 * (min_y - y2);
@@ -51,6 +52,14 @@ void DrawTriangle(Texture texture,
     const float z2_inv = 1.0f / z2;
     const float z3_inv = 1.0f / z3;
 
+    // Precompute texture size values
+    const int tw = texture.width;
+    const int th = texture.height;
+    const int tw_mask = tw - 1;
+    const int th_mask = th - 1;
+    const BOOL is_power_of_two = (tw & (tw - 1)) == 0 && (th & (th - 1)) == 0;
+
+    // Precompute Z interpolation values
     for (int y = min_y; y < max_y; y++) {
 
         // Barycentric coordinates at the start of the row
@@ -82,14 +91,21 @@ void DrawTriangle(Texture texture,
                     u = u - floorf(u);
                     v = v - floorf(v);
 
-                    int tx = (int)(u * (float)texture.width);
-                    int ty = (int)(v * (float)texture.height);
-                    int tw = (int)texture.width - 1;
-                    int th = (int)texture.height - 1;
-                    tx = tx < 0 ? 0 : (tx > tw ? tw : tx);
-                    ty = ty < 0 ? 0 : (ty > th ? th : ty);
-                    DWORD color = texture.data[(ty * texture.width) + tx];
-                    if ((color & 0xFF000000) != 0) { // alpha-test
+                    // Faster texture coordinate wrapping for power-of-two textures
+                    int tx, ty;
+                    if (is_power_of_two) {
+                        tx = ((int)(u * tw)) & tw_mask;
+                        ty = ((int)(v * th)) & th_mask;
+                    } else {
+                        u = u - floorf(u);
+                        v = v - floorf(v);
+                        tx = (int)(u * tw);
+                        ty = (int)(v * th);
+                        tx = tx < 0 ? 0 : (tx >= tw ? tw - 1 : tx);
+                        ty = ty < 0 ? 0 : (ty >= th ? th - 1 : ty);
+                    }
+                    DWORD color = texture.data[(ty * tw) + tx];
+                    if (transparency == 0 || (color & 0xFF000000) != 0) { // alpha-test
                         g_screen_color[i] = color;
                         g_screen_depth[i] = z;
                     }
