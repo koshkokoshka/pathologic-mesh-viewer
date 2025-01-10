@@ -21,7 +21,7 @@ A 3D model viewer for Pathologic Classic HD that supports the .mesh file format 
 
 ## Specification
 
-The goal of this project is to fully reverse-engineer the .mesh file structure used in the Pathologic game and its alpha version, to give the modding community abilify to extract, modify, and reimport game assets.
+The goal of this project is to fully reverse-engineer the .mesh file structure used in the Pathologic game and its alpha version, to give the modding community ability to extract, modify, and reimport game assets.
 
 ### .mesh file structure (NOT COMPLETE)
 
@@ -31,13 +31,18 @@ The following structure is a .bt template for the [SweetScape 010 Editor](https:
 
 ```c++
 struct {
-    // type=0 - pond_water.mesh
-    // type=2 - imnogogrannik.mesh
-    // type=4 - iboiny.mesh, ihidden_room.mesh
-    // type=5 - pulya6.mesh
-    local int type = 4;
+    // The .mesh file structure is inconsistent, and I haven't yet figured out how to reliably identify the correct structure.
+    // For now, I use different approaches for different meshes, hoping to eventually combine this knowledge into a unified file structure.
+    //
+    // structure_type=0 - pond_water.mesh
+    // structure_type=1 - leaves01.mesh
+    // structure_type=2 - imnogogrannik.mesh
+    // structure_type=3 - Bench01.mesh
+    // structure_type=4 - iboiny.mesh, ihidden_room.mesh
+    // structure_type=5 - pulya6.mesh
+    local int structure_type = 4;
 
-    if (type == 0) {
+    if (structure_type == 0) {
         int vertices_count;
         struct {
             float x, y, z;
@@ -48,7 +53,7 @@ struct {
         float unknown_2[3 * vertices_count];        
     }
  
-    if (type == 1) {
+    if (structure_type == 1) {
         int vertices_count;
         struct {
             float x, y, z;
@@ -61,7 +66,7 @@ struct {
         float unknown_2[9];        
     }
  
-    if (type == 2) {
+    if (structure_type == 2) {
         int unknown_1;
         struct {
             byte unknown_1;
@@ -79,7 +84,7 @@ struct {
         byte unknown_9[12];
     }
  
-    if (type == 3) {
+    if (structure_type == 3) {
         int unknown_1;
         int submesh_count;
         struct {
@@ -202,67 +207,125 @@ struct {
         char unknown_3;
     }
  
-    if (type == 4) {
-        int unknown_1;
+    if (structure_type == 4) {
+        int unknown_1_count;
         struct {
-            byte unknown_1; // 2
-            float unknown_2;
-            float unknown_3;
-            float unknown_4;
-            float unknown_5;
-        } unknown_2[6];
-        byte unknown_3[5];
-        int unknown_4;
-        struct {
-            int unknown_1;
-            int unknown_2;
-        } unknown_5[unknown_4];
-        float unknown_6;
-        float unknown_7;
-        float unknown_8;
-        int unknown_9;
-        byte unknown_10;
-        if (unknown_10 == 3) {
+            struct {
+                local int reading = true;
+                while (reading) {
+                    struct {
+                        byte unknown_1; // read blocks until this value is 0
+                        if (unknown_1 == 0) {
+                            reading = false;
+                            break;
+                        }
+                        float unknown_2;
+                        float unknown_3;
+                        float unknown_4;
+                        float unknown_5;
+                    } unknown_1;
+                }
+            } unknown_1;
+
+            int index; // probably current block index
             struct {
                 int unknown_1;
-                int unknown_2;
-                int unknown_3;
                 struct {
-                    byte unknown_1; // 2
+                    int unknown_1;
+                    int unknown_2;
+                } unknown_2[unknown_1];
+                float unknown_3;
+                float unknown_4;
+                float unknown_5;
+            } unknown_3;
+
+            int unknown_4_length;
+            char unknown_4[unknown_4_length];
+            int unknown_5_length;
+            int unknown_5[unknown_5_length];
+
+            struct {
+                int unknown_1;
+                struct {
+                    float unknown_1;
                     float unknown_2;
                     float unknown_3;
                     float unknown_4;
                     float unknown_5;
-                } unknown_4[5];
-                byte unknown_5;
-                int unkonwn_6;
-                int unkonwn_7;
-                float unknown_8;
-                float unknown_9;
-                float unknown_10;      
-                int unknown_11;
-                byte unknown_12;
-            } unknown_11;
-        }
-        int unknown_12;
-        int unknown_13[unknown_12];
-        int unknown_14;
+                    float unknown_6;
+                    float unknown_7;
+                    float unknown_8;
+                    float unknown_9;
+                } unknown_2[unknown_1];    
+                byte unknown_3[unknown_1];
+            } unknown_6;
+        } unknown_1[unknown_1_count] <optimize=false>;
+
+        int unknown_2_count;
+        int unknown_2[unknown_2_count]; // array of ints that sometimes matches the triangle count
+
+        int unknown_3_count;
         struct {
-            float unknown_1;
-            float unknown_2;
-            float unknown_3;
-            float unknown_4;
-            float unknown_5;
-            float unknown_6;
-            float unknown_7;
-            float unknown_8;
-            float unknown_9;
-        } unknown_15[unknown_14];
-        int unknown_16;
-        int unknown_17;
+            int triangles_count_1;
+            int unknown_1;
+            byte texture_name_length;
+            char texture_name[texture_name_length];
+            int triangles_count_2;
+
+            byte vertices_type; // 0 - float, 1 - short
+            if (vertices_type == 1) {
+                float unknown_3; // probably world coordinates
+                float unknown_4;
+                float unknown_5;
+            }
+            struct {
+                if (vertices_type == 0) {
+                    float x;
+                    float y;
+                    float z;
+                } else {
+                    short x;
+                    short y;
+                    short z;
+                }
+                char unknown_1[4];
+                float u;
+                float v;
+            } vertices[triangles_count_2*3] <optimize=false>;
+
+            struct {
+                int unknown_1;
+                if (unknown_1 > 0) {
+                    struct {
+                        int unknown_1;
+                        int unknown_2;
+                        int unknown_3_length;
+                        char unknown_3[unknown_3_length];
+                        int unknown_4_length;
+                        char unknown_4[unknown_4_length];
+                        struct {
+                            int unknown_1;
+                            struct {
+                                short unknown_1;
+                                float unknown_2;
+                                float unknown_3;
+                                float unknown_4;
+                                float unknown_5;
+                            } unknown_2[unknown_1*3];
+                            float unknown_3;
+                        } unknown_5;
+                    } unknown_2[unknown_1] <optimize=false>;
+                    struct {
+                        int unknown_1;
+                        int unknown_2;
+                    } unknown_10[triangles_count_2];
+                }
+            } unknown_2[unknown_2_count] <optimize=false>;
+
+        } unknown_3[unknown_3_count] <optimize=false>;
     }
  
-    if (type == 5) {
+    if (structure_type == 5) {
         int mesh_count;
         int unknown_1;
         int unknown_2;
