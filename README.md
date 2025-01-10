@@ -46,11 +46,11 @@ struct {
         int vertices_count;
         struct {
             float x, y, z;
-        } vertices[vertices_count] <optimize=false>;
+        } vertices[vertices_count];
         int indices_count;
         struct { short a, b, c; } indices[indices_count];
         float unknown_1[3];
-        float unknown_2[3 * vertices_count];        
+        float unknown_2[3 * vertices_count];     
     }
  
     if (structure_type == 1) {
@@ -58,12 +58,12 @@ struct {
         struct {
             float x, y, z;
             float u, v;
-        } vertices[vertices_count] <optimize=false>;
+        } vertices[vertices_count];
         int indices_count;
         struct { short a, b, c; } indices[indices_count];
         char texture_name_length;
         char texture_name[texture_name_length];
-        float unknown_2[9];        
+        float unknown_2[9];
     }
  
     if (structure_type == 2) {
@@ -79,9 +79,9 @@ struct {
         float unknown_4[3];
         int unknown_5;
         byte unknown_6;
-        int unknown_7;
-        int unknown_8[unknown_7];
-        byte unknown_9[12];
+        int unknown_7_length;
+        int unknown_7[unknown_7_length];
+        byte unknown_8[12];
     }
  
     if (structure_type == 3) {
@@ -92,6 +92,7 @@ struct {
             // material_type=33 - icot_eva_Kerosinka.mesh
             // material_type=17 - inv_grass_white_plet.mesh
             // material_type=17 - r4_house3_01.mesh
+            // material_type=5 - Sobor.mesh
             int unknown_1;
             int material_type; // probably material flags
             if (material_type == 0) {
@@ -103,14 +104,24 @@ struct {
                 }
                 char texture_name_length;
                 char texture_name[texture_name_length];
+                
                 if (material_type == 1 || material_type == 33) {
                     char unknown_4;
                 }
+                if (material_type == 5) {
+                    struct {
+                        char unknown_4;
+                        float unknown_5[4];
+                    } unknown_4;
+                }
             }
+    
             int vertices_count;
             int indices_count;
-            float unknown_5[19];
-            if (material_type == 0 || material_type == 1 ||  material_type == 17) {
+    
+            float unknown_5[19]; // Sphere3D and COBB3D        
+    
+            if (material_type == 0 || material_type == 1 || material_type == 5 || material_type == 17) {
                 int unknown_block_count;
                 local int i;
                 for (i = 0; i < unknown_block_count; i++) {
@@ -136,19 +147,21 @@ struct {
                 }
             }
         } submeshes[submesh_count] <optimize=false>;
+    
         local int i;
         for (i = 0; i < submesh_count; i++) {
             struct {
-                byte vertex_type;
-                if (vertex_type == 1) {
+                byte vertices_type; // 0 - float, 1 - short
+                if (vertices_type == 1) {
                     struct {
-                        float unknown2;
+                        float unknown2; // probably world coordinates
                         float unknown3;
                         float unknown4;
-                    } unknown_1 <optimize=false>;
+                    } unknown_1;
                 }
+    
                 struct {
-                    if (vertex_type == 0) {
+                    if (vertices_type == 0) {
                         float x;
                         float y;
                         float z;
@@ -157,6 +170,7 @@ struct {
                         short y;
                         short z;
                     }
+                    
                     if (submeshes[i].material_type == 0) { // ihouse2_krovatka01.mesh
                         int unknown_6;
                         if (submeshes[i].unknown_3 == 1) { // iboiny_railing01.mesh
@@ -170,6 +184,10 @@ struct {
                             int unknown_6;
                         }
                     }
+                    if (submeshes[i].material_type == 5) { // Sobor.mesh
+                        int unknown_1;
+                        float u, v;
+                    }
                     if (submeshes[i].material_type == 17) {
                         int unknown_1;
                         float u, v;
@@ -181,9 +199,11 @@ struct {
                         float u, v;
                     }
                 } vertices[submeshes[i].vertices_count] <optimize=false>;
+    
                 struct { 
                     short v1, v2, v3; 
                 } indices[submeshes[i].indices_count] <optimize=false>;
+                
                 if (submeshes[i].material_type == 0 || submeshes[i].material_type == 1 || submeshes[i].material_type == 17) {
                     local int j;
                     local int k;
