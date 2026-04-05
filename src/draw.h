@@ -6,11 +6,12 @@
 
 #include "texture.h"
 #include "clip_line.h"
+#include "math.h"
 
 //
 // Renderer constants
 //
-#define NEAR_CLIP 0.0005f // note: setting too low may cause clipping problems
+#define NEAR_CLIP 0.01f // note: setting too low may cause visual artifacts and even crashes
 
 //
 // Global draw variables
@@ -45,6 +46,23 @@ extern float g_camera_yaw;
 extern Texture fallback_texture;
 
 //
+// Draw structures
+//
+typedef struct {
+    float x, y, z;
+    float u, v;
+} Vertex;
+
+static void Vertex_Lerp(OUT Vertex *out, Vertex a, Vertex b, float t)
+{
+    out->x = Lerp(a.x, b.x, t);
+    out->y = Lerp(a.y, b.y, t);
+    out->z = Lerp(a.z, b.z, t);
+    out->u = Lerp(a.u, b.u, t);
+    out->v = Lerp(a.v, b.v, t);
+}
+
+//
 // Draw functions
 //
 
@@ -75,7 +93,7 @@ static void DrawLine(int x1, int y1, int x2, int y2, DWORD color)
     DrawLine_Unsafe(x1, y1, x2, y2, color);
 }
 
-void DrawTriangle(Texture texture, BOOL transparency,
+void DrawTriangle(const Texture *texture, BOOL transparency,
                   float ax, float ay, float z1, float u1, float v1,
                   float bx, float by, float z2, float u2, float v2,
                   float cx, float cy, float z3, float u3, float v3);

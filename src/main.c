@@ -16,8 +16,9 @@
 // Window menu
 #define MENU_ITEM_ID_DRAW_WIREFRAME 1
 #define MENU_ITEM_ID_DRAW_POINTS 2
-#define MENU_ITEM_ID_DRAW_FACES 3
+#define MENU_ITEM_ID_DRAW_TEXTURES 3
 #define MENU_ITEM_ID_DRAW_TRANSPARENCY 4
+#define MENU_ITEM_ID_BACKFACE_CULLING 5
 #define MENU_ITEM_ID_OPEN 10
 #define MENU_ITEM_ID_EXPORT_OBJ 11
 #define MENU_ITEM_ID_EXIT 20
@@ -39,50 +40,50 @@ int g_mesh_directory_files_count = 0;
 int g_mesh_directory_file_number = 0;
 struct { char name[MAX_PATH]; } *g_mesh_directory_files;
 
-void Viewport_CalculateBounds()
+/**
+ * This function calculates the bounding box of a mesh and finds the maximum extent
+ */
+float CalculateLoadedMeshScale()
 {
     float min_x =  1000.0f, min_y =  1000.0f, min_z =  1000.0f;
     float max_x = -1000.0f, max_y = -1000.0f, max_z = -1000.0f;
     for (int i1 = 0; i1 < g_mesh.submesh_count; ++i1) {
-        MeshSubmesh submesh = g_mesh.submeshes[i1];
-        for (int i2 = 0; i2 < submesh.triangle_count; ++i2) {
-            MeshTriangle triangle = submesh.triangles[i2];
+        SubmeshHeader submesh = g_mesh.submeshes[i1];
+        for (int i2 = 0; i2 < submesh.indices_count; ++i2) {
+            MeshTriangle triangle = submesh.indices[i2];
             MeshPoint a = submesh.points[triangle.a];
             MeshPoint b = submesh.points[triangle.b];
             MeshPoint c = submesh.points[triangle.c];
-            min_x = min(min_x, a.x);
-            min_x = min(min_x, b.x);
-            min_x = min(min_x, c.x);
-            min_y = min(min_y, a.y);
-            min_y = min(min_y, b.y);
-            min_y = min(min_y, c.y);
-            min_z = min(min_y, a.z);
-            min_z = min(min_y, b.z);
-            min_z = min(min_y, c.z);
-            max_x = max(max_x, a.x);
-            max_x = max(max_x, b.x);
-            max_x = max(max_x, c.x);
-            max_y = max(max_y, a.y);
-            max_y = max(max_y, b.y);
-            max_y = max(max_y, c.y);
-            max_z = max(max_y, a.z);
-            max_z = max(max_y, b.z);
-            max_z = max(max_y, c.z);
+            min_x = min(min_x, a.pos.x);
+            min_x = min(min_x, b.pos.x);
+            min_x = min(min_x, c.pos.x);
+            min_y = min(min_y, a.pos.y);
+            min_y = min(min_y, b.pos.y);
+            min_y = min(min_y, c.pos.y);
+            min_z = min(min_y, a.pos.z);
+            min_z = min(min_y, b.pos.z);
+            min_z = min(min_y, c.pos.z);
+            max_x = max(max_x, a.pos.x);
+            max_x = max(max_x, b.pos.x);
+            max_x = max(max_x, c.pos.x);
+            max_y = max(max_y, a.pos.y);
+            max_y = max(max_y, b.pos.y);
+            max_y = max(max_y, c.pos.y);
+            max_z = max(max_y, a.pos.z);
+            max_z = max(max_y, b.pos.z);
+            max_z = max(max_y, c.pos.z);
         }
     }
 
-    float bounds = fabsf(max_x);
-    bounds = max(bounds, fabsf(min_x));
-    bounds = max(bounds, fabsf(max_y));
-    bounds = max(bounds, fabsf(min_y));
-    bounds = max(bounds, fabsf(max_z));
-    bounds = max(bounds, fabsf(min_z));
+    // Calculate maximum extent
+    float extent = fabsf(max_x);
+    extent = max(extent, fabsf(min_x));
+    extent = max(extent, fabsf(max_y));
+    extent = max(extent, fabsf(min_y));
+    extent = max(extent, fabsf(max_z));
+    extent = max(extent, fabsf(min_z));
 
-    g_camera_x = 0;
-    g_camera_y = 0;
-    g_camera_z = bounds * 3;
-    g_camera_rot = 0;
-    g_camera_yaw = 0;
+    return extent;
 }
 
 BOOL FormatNumberWithCommas(char *output, int output_size, int number)
@@ -108,13 +109,15 @@ BOOL FormatNumberWithCommas(char *output, int output_size, int number)
 
 void TryLoadMesh(HWND window, const char *path)
 {
+    // Store mesh path
     strcpy(g_mesh_path, path);
 
+    // Update statusbar text
     char status[400];
     snprintf(status, sizeof(status), "Loading: %s", g_mesh_path);;
     SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&status);
 
-    // Get directory name
+    // Get directory name from path
     char directory[MAX_PATH];
     strcpy(directory, g_mesh_path); // copy full .mesh file path
     if (PathRemoveFileSpec(directory)) {
@@ -160,10 +163,10 @@ void TryLoadMesh(HWND window, const char *path)
     SetWindowText(window, title);
 
     if (g_mesh_loaded) {
-        // release previously allocated memory
+        // Release previously allocated memory
         for (int i = 0; i < g_mesh.submesh_count; ++i) {
             HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].points);
-            HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].triangles);
+            HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].indices);
             if (g_mesh.submeshes[i].texture.data != fallback_texture.data) { // do not release memory of fallback texture
                 HeapFree(GetProcessHeap(), 0, g_mesh.submeshes[i].texture.data);
             }
@@ -179,19 +182,25 @@ void TryLoadMesh(HWND window, const char *path)
     g_mesh_error = FALSE;
 
     int total_vertices = 0;
-    int total_triangles = 0;
+    int total_indices = 0;
     for (int i = 0; i < g_mesh.submesh_count; ++i) {
         total_vertices += g_mesh.submeshes[i].point_count;
-        total_triangles += g_mesh.submeshes[i].triangle_count;
+        total_indices += g_mesh.submeshes[i].indices_count;
     }
     char vertices_string[20];
     FormatNumberWithCommas(vertices_string, sizeof(vertices_string), total_vertices);
-    char triangles_string[20];
-    FormatNumberWithCommas(triangles_string, sizeof(triangles_string), total_triangles);
-    snprintf(status, sizeof(status), "Vertices: %s | Polygons: %s | Materials: %d", vertices_string, triangles_string, g_mesh.submesh_count);
+    char indices_string[20];
+    FormatNumberWithCommas(indices_string, sizeof(indices_string), total_indices);
+    snprintf(status, sizeof(status), "Vertices: %s | Polygons: %s | Materials: %d", vertices_string, indices_string, g_mesh.submesh_count);
     SendMessage(g_statusbar, SB_SETTEXT, MAKEWPARAM(0, 0), (LPARAM)&status);
 
-    Viewport_CalculateBounds();
+    // Update camera position
+    float scale = CalculateLoadedMeshScale();
+    g_camera_x = 0;
+    g_camera_y = 0;
+    g_camera_z = scale * 3;
+    // g_camera_rot = 0;
+    // g_camera_yaw = 0;
 }
 
 BOOL ExportLoadedMesh(HWND window, const char *path)
@@ -219,40 +228,40 @@ BOOL ExportLoadedMesh(HWND window, const char *path)
     WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
     int points_offset = 0;
     for (int i = 0; i < g_mesh.submesh_count; ++i) {
-        MeshSubmesh submesh = g_mesh.submeshes[i];
+        SubmeshHeader *submesh = &g_mesh.submeshes[i];
         snprintf(buffer, sizeof(buffer), "g %d\n", i+1);
         WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
-        for (int j = 0; j < submesh.point_count; ++j) {
-            MeshPoint point = submesh.points[j];
-            snprintf(buffer, sizeof(buffer), "v %f %f %f\n", point.x, point.y, point.z);
+        for (int j = 0; j < submesh->point_count; ++j) {
+            MeshPoint point = submesh->points[j];
+            snprintf(buffer, sizeof(buffer), "v %f %f %f\n", point.pos.x, point.pos.y, point.pos.z);
             WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
         }
-        for (int j = 0; j < submesh.point_count; ++j) {
-            MeshPoint point = submesh.points[j];
+        for (int j = 0; j < submesh->point_count; ++j) {
+            MeshPoint point = submesh->points[j];
             snprintf(buffer, sizeof(buffer), "vt %f %f\n", point.u, 1.0f-point.v);
             WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
         }
         snprintf(buffer, sizeof(buffer), "s 1\n", i); // enable smooth shading
         WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
-        snprintf(buffer, sizeof(buffer), "usemtl %s\n", PathFindFileName(submesh.texture_path));
+        snprintf(buffer, sizeof(buffer), "usemtl %s\n", submesh->texture_name);
         WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
-        for (int j = 0; j < submesh.triangle_count; ++j) {
-            MeshTriangle triangle = submesh.triangles[j];
+        for (int j = 0; j < submesh->indices_count; ++j) {
+            MeshTriangle triangle = submesh->indices[j];
             snprintf(buffer, sizeof(buffer), "f %d/%d %d/%d %d/%d\n",
                 points_offset + triangle.a+1, points_offset + triangle.a+1,
                 points_offset + triangle.b+1, points_offset + triangle.b+1,
                 points_offset + triangle.c+1, points_offset + triangle.c+1);
             WriteFile(obj_file, buffer, strlen(buffer), NULL, NULL);
         }
-        points_offset += submesh.point_count;
+        points_offset += submesh->point_count;
     }
     // Write .mtl file
     for (int i = 0; i < g_mesh.submesh_count; ++i) {
-        MeshSubmesh submesh = g_mesh.submeshes[i];
-        snprintf(buffer, sizeof(buffer), "newmtl %s\n", PathFindFileName(submesh.texture_path));
+        SubmeshHeader *submesh = &g_mesh.submeshes[i];
+        snprintf(buffer, sizeof(buffer), "newmtl %s\n", submesh->texture_name);
         WriteFile(mtl_file, buffer, strlen(buffer), NULL, NULL);
-        if (submesh.texture.data != fallback_texture.data) { // do not write texture for fallback material
-            snprintf(buffer, sizeof(buffer), "map_Kd %s\n", submesh.texture_path);
+        if (submesh->texture.data != fallback_texture.data) { // do not write texture for fallback material
+            snprintf(buffer, sizeof(buffer), "map_Kd %s\n", submesh->texture_path);
             WriteFile(mtl_file, buffer, strlen(buffer), NULL, NULL);
         }
     }
@@ -283,7 +292,7 @@ BOOL GenerateCheckerboardTexture(Texture *output, int width, int height, int pat
     return TRUE;
 }
 
-void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL draw_transparency)
+void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_textures, BOOL draw_transparency, BOOL backface_culling)
 {
     // Precompute screen-related values
     PrecomputeRenderingVariables();
@@ -303,12 +312,27 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL 
 
     // Render mesh wireframe
     for (int i1 = 0; i1 < g_mesh.submesh_count; ++i1) {
-        MeshSubmesh submesh = g_mesh.submeshes[i1];
-        for (int i2 = 0; i2 < submesh.triangle_count; ++i2) {
-            MeshTriangle t = submesh.triangles[i2];
-            MeshPoint a = submesh.points[t.a];
-            MeshPoint b = submesh.points[t.b];
-            MeshPoint c = submesh.points[t.c];
+        SubmeshHeader *submesh = &g_mesh.submeshes[i1];
+
+        // Safety check
+        if (submesh->texture.width == 0 || submesh->texture.height == 0 || submesh->texture.data == NULL) {
+            continue;
+        }
+
+        for (int i2 = 0; i2 < submesh->indices_count; ++i2) {
+            MeshTriangle *t = &submesh->indices[i2];
+            MeshPoint *pa = &submesh->points[t->a];
+            MeshPoint *pb = &submesh->points[t->b];
+            MeshPoint *pc = &submesh->points[t->c];
+
+            Vertex a = (Vertex){ pa->pos.x, pa->pos.y, pa->pos.z, pa->u, pa->v };
+            Vertex b = (Vertex){ pb->pos.x, pb->pos.y, pb->pos.z, pb->u, pb->v };
+            Vertex c = (Vertex){ pc->pos.x, pc->pos.y, pc->pos.z, pc->u, pc->v };
+
+            // Safety check
+            if (isnan(a.u) || isnan(a.v) || isnan(b.u) || isnan(b.v) || isnan(c.u) || isnan(c.v)) {
+                continue;
+            }
 
             // Fix coordinates system
             a.y *= -1;
@@ -338,28 +362,34 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL 
             //
             // Clipping
             //
-            // TODO: Clipping is disabled until I resolve mesh scale issues
-            /*
-            MeshPoint splits[CLIP_MAX_POINTS] = { a, b, c };
+            Vertex splits[CLIP_MAX_POINTS] = { a, b, c };
             int splits_count = ClipTriangle(splits, NEAR_CLIP);
-            for (int i2 = 0; i2 < splits_count; ++i2) {
-                a = splits[(i2 * 3) + 0];
-                b = splits[(i2 * 3) + 1];
-                c = splits[(i2 * 3) + 2];
-            */
+            for (int i3 = 0; i3 < splits_count; ++i3) {
+                a = splits[(i3 * 3) + 0];
+                b = splits[(i3 * 3) + 1];
+                c = splits[(i3 * 3) + 2];
+
+                // Safety check
+                if (a.z <= 0 || b.z <= 00 || c.z <= 0) { continue; }
 
                 // Perspective divide
-                a.x /= a.z;
-                a.y /= a.z;
-                b.x /= b.z;
-                b.y /= b.z;
-                c.x /= c.z;
-                c.y /= c.z;
+                float inv_az = 1.0f / a.z;
+                float inv_bz = 1.0f / b.z;
+                float inv_cz = 1.0f / c.z;
+                a.x *= inv_az;
+                a.y *= inv_az;
+                b.x *= inv_bz;
+                b.y *= inv_bz;
+                c.x *= inv_cz;
+                c.y *= inv_cz;
 
                 // Backface culling
-                if (a.z <= 0) { continue; }
-                if (b.z <= 0) { continue; }
-                if (c.z <= 0) { continue; }
+                if (backface_culling) {
+                    float normal_z = (b.y - a.y) * (c.x - a.x) - (b.x - a.x) * (c.y - a.y); // compute only z-normal
+                    if (normal_z >= 0) {
+                        continue; // cull back-facing triangles
+                    }
+                }
 
                 // Screen-space transform (remap from [-0.5, 0.5] to [0, screen_dimension]
                 a.x = (0.5f + a.x) * g_screen_dimension + g_screen_dimension_offset_x;
@@ -369,8 +399,8 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL 
                 c.x = (0.5f + c.x) * g_screen_dimension + g_screen_dimension_offset_x;
                 c.y = (0.5f + c.y) * g_screen_dimension + g_screen_dimension_offset_y;
 
-                if (draw_faces) {
-                    DrawTriangle(submesh.texture, draw_transparency,
+                if (draw_textures) {
+                    DrawTriangle(&submesh->texture, draw_transparency,
                                  a.x, a.y, a.z, a.u, a.v,
                                  b.x, b.y, b.z, b.u, b.v,
                                  c.x, c.y, c.z, c.u, c.v);
@@ -380,22 +410,20 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL 
                     DrawLine(b.x, b.y, c.x, c.y, 0x999922);
                     DrawLine(c.x, c.y, a.x, a.y, 0x999922);
                 }
-            /*
             }
-            */
         }
     }
 
-    // Render mesh points
+    // Draw vertices
     if (draw_points) {
         for (int i1 = 0; i1 < g_mesh.submesh_count; ++i1) {
-            MeshSubmesh submesh = g_mesh.submeshes[i1];
-            for (int i2 = 0; i2 < submesh.point_count; ++i2) {
-                MeshPoint point = submesh.points[i2];
+            SubmeshHeader *submesh = &g_mesh.submeshes[i1];
+            for (int i2 = 0; i2 < submesh->point_count; ++i2) {
+                MeshPoint *p = &submesh->points[i2];
 
-                float x = point.x;
-                float y = point.y;
-                float z = point.z;
+                float x = p->pos.x;
+                float y = p->pos.y;
+                float z = p->pos.z;
                 y *= -1;
 
                 // Model-space rotation
@@ -427,7 +455,7 @@ void Viewport_Draw(BOOL draw_wireframe, BOOL draw_points, BOOL draw_faces, BOOL 
     }
 }
 
-BOOL FileSelectDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR filter)
+BOOL FileOpenDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR filter)
 {
     OPENFILENAME dialog_params;
     ZeroMemory(&dialog_params, sizeof(OPENFILENAME));
@@ -440,7 +468,7 @@ BOOL FileSelectDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR
     return GetOpenFileName(&dialog_params);
 }
 
-BOOL FileOpenDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR filter)
+BOOL FileSaveDialog_Show(OUT char *result, int result_max, HWND parent, LPCSTR filter)
 {
     OPENFILENAME dialog_params;
     ZeroMemory(&dialog_params, sizeof(OPENFILENAME));
@@ -481,8 +509,9 @@ BOOL Window_Create(HWND window)
     HMENU menu_view = CreatePopupMenu();
     AppendMenu(menu_view, MF_STRING, MENU_ITEM_ID_DRAW_WIREFRAME, "Draw wireframe\tF2");
     AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_POINTS, "Draw points\tF3");
-    AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_FACES, "Draw faces\tF4");
+    AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_TEXTURES, "Draw textures\tF4");
     AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_DRAW_TRANSPARENCY, "Draw transparency\tF5");
+    AppendMenu(menu_view, MF_STRING | MF_CHECKED, MENU_ITEM_ID_BACKFACE_CULLING, "Backface culling\tF6");
     AppendMenu(g_menu, MF_POPUP, (UINT_PTR)menu_view, "View");
     HMENU menu_help = CreatePopupMenu();
     AppendMenu(menu_help, MF_STRING, MENU_ITEM_ID_HELP, "About\tF1");
@@ -515,8 +544,9 @@ void Window_OnKeyDown(HWND window, WPARAM w_param)
         case VK_F1: ShowHelp(window); break;
         case VK_F2: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_WIREFRAME); break;
         case VK_F3: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_POINTS); break;
-        case VK_F4: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_FACES); break;
+        case VK_F4: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_TEXTURES); break;
         case VK_F5: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_DRAW_TRANSPARENCY); break;
+        case VK_F6: WindowMenu_ToggleItem(g_menu, MENU_ITEM_ID_BACKFACE_CULLING); break;
         case VK_LEFT: {
             char path[MAX_PATH];
             int prev_file_number = g_mesh_directory_file_number-1;
@@ -547,15 +577,16 @@ void Window_OnCommand(HWND window, WPARAM w_param)
     switch (w_param) {
         case MENU_ITEM_ID_DRAW_WIREFRAME:
         case MENU_ITEM_ID_DRAW_POINTS:
-        case MENU_ITEM_ID_DRAW_FACES:
+        case MENU_ITEM_ID_DRAW_TEXTURES:
         case MENU_ITEM_ID_DRAW_TRANSPARENCY:
+        case MENU_ITEM_ID_BACKFACE_CULLING:
             WindowMenu_ToggleItem(g_menu, w_param);
             RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
             break;
         case MENU_ITEM_ID_OPEN: {
             TCHAR path[MAX_PATH];
             path[0] = '\0';
-            if (FileSelectDialog_Show(path, sizeof(path), window, "Pathologic game model (.mesh)\0*.mesh\0\0")) {
+            if (FileOpenDialog_Show(path, sizeof(path), window, "Pathologic game model (.mesh)\0*.mesh\0\0")) {
                 TryLoadMesh(window, path);
             }
             RedrawWindow(window, NULL, NULL, RDW_INVALIDATE);
@@ -571,7 +602,7 @@ void Window_OnCommand(HWND window, WPARAM w_param)
             strcpy(path, PathFindFileName(g_mesh_path));
             PathRemoveExtension(path);
             PathAddExtension(path, ".obj");
-            if (FileOpenDialog_Show(path, sizeof(path), window, "Wavefront OBJ (.obj)\0*.obj\0\0")) {
+            if (FileSaveDialog_Show(path, sizeof(path), window, "Wavefront OBJ (.obj)\0*.obj\0\0")) {
                 if (!ExportLoadedMesh(window, path)) {
                     MessageBox(window, TEXT("Failed to export .OBJ file"), TEXT("Export failed"), MB_OK | MB_ICONERROR);
                 }
@@ -633,9 +664,10 @@ void Window_OnPaint(HWND window)
 
     BOOL draw_wireframe = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_WIREFRAME);
     BOOL draw_points = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_POINTS);
-    BOOL draw_faces = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_FACES);
+    BOOL draw_faces = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_TEXTURES);
     BOOL draw_transparency = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_DRAW_TRANSPARENCY);
-    Viewport_Draw(draw_wireframe, draw_points, draw_faces, draw_transparency);
+    BOOL backface_culling = WindowMenu_IsItemChecked(g_menu, MENU_ITEM_ID_BACKFACE_CULLING);
+    Viewport_Draw(draw_wireframe, draw_points, draw_faces, draw_transparency, backface_culling);
 
     BITMAPINFO bmi;
     ZeroMemory(&bmi, sizeof(BITMAPINFO));
@@ -784,14 +816,14 @@ int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int n
     HWND window = CreateWindowEx(
         WS_EX_COMPOSITED, window_class.lpszClassName,
         TEXT(APP_NAME), WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+        CW_USEDEFAULT, CW_USEDEFAULT, 640, 480,
         NULL, NULL, hInstance, NULL);
     if (window == INVALID_HANDLE_VALUE) {
         return 1;
     }
     ShowWindow(window, nShowCmd);
 
-    // Start main loop
+    // Start message loop
     MSG message;
     while (GetMessage(&message, NULL, 0, 0)) {
         TranslateMessage(&message);

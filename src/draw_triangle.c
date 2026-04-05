@@ -2,125 +2,205 @@
 
 #include <math.h>
 
-void DrawTriangle(Texture texture, BOOL transparency,
-                  float ax, float ay, float z1, float u1, float v1,
-                  float bx, float by, float z2, float u2, float v2,
-                  float cx, float cy, float z3, float u3, float v3)
+static void SwapFloat(float* a, float* b) { float c = *a; *a = *b; *b = c; }
+
+static DWORD Texture_SampleNearest(const Texture *texture, float u, float v)
 {
-    if (texture.width == 0 || texture.height == 0) { return; } // safety check
+    // Wrap UV coordinates and convert to texture space
+    const int tx = (int)((float)texture->width  * (u - floorf(u)));
+    const int ty = (int)((float)texture->height * (v - floorf(v)));
 
-    const int x1 = (int)ax;
-    const int y1 = (int)ay;
-    const int x2 = (int)bx;
-    const int y2 = (int)by;
-    const int x3 = (int)cx;
-    const int y3 = (int)cy;
+    // Sample texture color
+    return texture->data[ty * texture->width + tx];
+}
 
-    // Find triangle bounds
-    int min_x = (x1 < x2) ? ( (x1 < x3) ? x1 : x3 ) : ( (x2 < x3) ? x2 : x3 );
-    int min_y = (y1 < y2) ? ( (y1 < y3) ? y1 : y3 ) : ( (y2 < y3) ? y2 : y3 );
-    int max_x = (x1 > x2) ? ( (x1 > x3) ? x1 : x3 ) : ( (x2 > x3) ? x2 : x3 );
-    int max_y = (y1 > y2) ? ( (y1 > y3) ? y1 : y3 ) : ( (y2 > y3) ? y2 : y3 );
-
-    // Clip against screen bounds
-    if (min_x < 0) { min_x = 0; }
-    if (max_x > g_screen_width) { max_x = g_screen_width; }
-    if (min_y < 0) { min_y = 0; }
-    if (max_y > g_screen_height) { max_y = g_screen_height; }
-
-    // Compute edge coefficients
-    const int a12 = y2 - y3;
-    const int b12 = x3 - x2;
-    const int a23 = y3 - y1;
-    const int b23 = x1 - x3;
-    const int a31 = y1 - y2;
-    const int b31 = x2 - x1;
-
-    // Precompute initial edge values
-    float w1_row = a12 * (min_x - x3) + b12 * (min_y - y3);
-    float w2_row = a23 * (min_x - x1) + b23 * (min_y - y1);
-    float w3_row = a31 * (min_x - x2) + b31 * (min_y - y2);
-
-    // Precompute the inverse of the triangle's area
-    const float area = ((y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3));
-    if (area == 0) {
-        return; // nothing to draw
+void DrawTriangle_Span(
+    const Texture *texture,
+    BOOL transparency,
+    int y,
+    float lx, float lz, float la, float lb, // left edge
+    float rx, float rz, float ra, float rb  // right edge
+) {
+    // Ensure "l" is always to the left of "r"
+    if (lx > rx) {
+        SwapFloat(&lx, &rx);
+        SwapFloat(&lz, &rz);
+        SwapFloat(&la, &ra);
+        SwapFloat(&lb, &rb);
     }
-    const float area_inv = 1.0f / area;
 
-    const float z1_inv = 1.0f / z1;
-    const float z2_inv = 1.0f / z2;
-    const float z3_inv = 1.0f / z3;
+    // Precalculate spans
+    float span_x = rx - lx;
+    if (span_x <= 0.0f) {
+        return; // skip if no pixels to draw
+    }
+    float inv_span_x = 1.0f / span_x;
+    float span_z = rz - lz;
+    float span_a = ra - la;
+    float span_b = rb - lb;
 
-    // Precompute texture size values
-    const int tw = texture.width;
-    const int th = texture.height;
-    const int tw_mask = tw - 1;
-    const int th_mask = th - 1;
-    const BOOL is_power_of_two = (tw & (tw - 1)) == 0 && (th & (th - 1)) == 0;
+    // Round x-coordinates and clamp to screen bounds
+    int ilx = (int) ceilf(lx - 0.5f); // top-left rule: ceil to include left edge
+    int irx = (int)floorf(rx - 0.5f); // top-left rule: floor to exclude right edge
+    int x_min = max(ilx, 0);
+    int x_max = min(irx + 1, g_screen_width);
 
-    // Precompute Z interpolation values
-    for (int y = min_y; y < max_y; y++) {
+    // Precompute interpolant steps
+    float dz_step = span_z * inv_span_x;
+    float da_step = span_a * inv_span_x;
+    float db_step = span_b * inv_span_x;
 
-        // Barycentric coordinates at the start of the row
-        float w1 = w1_row;
-        float w2 = w2_row;
-        float w3 = w3_row;
+    // Initial interpolant values
+    float t = ((float)x_min + 0.5f - lx) * inv_span_x;
+    float z = lz + span_z * t;
+    float a = la + span_a * t;
+    float b = lb + span_b * t;
 
-        for (int x = min_x; x < max_x; x++) {
+    // Get scanline pointers
+    int scanline = (g_screen_width * y) + x_min;
+    DWORD *color_ptr = &g_screen_color[scanline];
+    float *depth_ptr = &g_screen_depth[scanline];
 
-            // If p is on the right side of all three edges, render pixel
-            if (w1 >= 0 && w2 >= 0 && w3 >= 0) {
+    // Loop over the horizontal range of the current scanline
+    for (int x = x_min; x < x_max; x++) {
 
-                const size_t i = (y * g_screen_width) + x;
+        // Depth test
+        if (z <= *depth_ptr) {
+            goto DISCARD;
+        }
+        float inv_z = 1.0f / z; // precompute 1/z for perspective-correct interpolation
 
-                // Interpolate triangle coordinates using barycentric coordinates
-                const float a = w1 * area_inv;
-                const float b = w2 * area_inv;
-                const float c = w3 * area_inv;
+        // Perspective-correct texture interpolation
+        float u = a * inv_z;
+        float v = b * inv_z;
 
-                // Interpolate depth
-                const float z = (a * z1_inv) + (b * z2_inv) + (c * z3_inv);
-                if (z > g_screen_depth[i]) { // Test depth
+        // Sample color based on the texture filtering method
+        DWORD color = Texture_SampleNearest(texture, u, v);
 
-                    // Interpolate texture coordinates
-                    float u = (u1 * a * z1_inv + u2 * b * z2_inv + u3 * c * z3_inv) / z;
-                    float v = (v1 * a * z1_inv + v2 * b * z2_inv + v3 * c * z3_inv) / z;
-
-                    // Wrap texture coordinates to make the texture repeatable
-                    u = u - floorf(u);
-                    v = v - floorf(v);
-
-                    // Faster texture coordinate wrapping for power-of-two textures
-                    int tx, ty;
-                    if (is_power_of_two) {
-                        tx = ((int)(u * tw)) & tw_mask;
-                        ty = ((int)(v * th)) & th_mask;
-                    } else {
-                        u = u - floorf(u);
-                        v = v - floorf(v);
-                        tx = (int)(u * tw);
-                        ty = (int)(v * th);
-                        tx = tx < 0 ? 0 : (tx >= tw ? tw - 1 : tx);
-                        ty = ty < 0 ? 0 : (ty >= th ? th - 1 : ty);
-                    }
-                    DWORD color = texture.data[(ty * tw) + tx];
-                    if (transparency == 0 || (color & 0xFF000000) != 0) { // alpha-test
-                        g_screen_color[i] = color;
-                        g_screen_depth[i] = z;
-                    }
-                }
-            }
-
-            // Move to the next pixel
-            w1 += a12;
-            w2 += a23;
-            w3 += a31;
+        // Transparency-bit test
+        if (transparency && (color & 0xFF000000) == 0) {
+            goto DISCARD;
         }
 
-        // Move to the next scanline
-        w1_row += b12;
-        w2_row += b23;
-        w3_row += b31;
+        *color_ptr = color;
+        *depth_ptr = z;
+
+    DISCARD:
+        // Advance interpolants
+        z += dz_step;
+        a += da_step;
+        b += db_step;
+
+        // Advance scanline pointers
+        color_ptr++;
+        depth_ptr++;
+    }
+}
+
+void DrawTriangle(
+    const Texture *texture, BOOL transparency,
+    float x1, float y1, float z1, float a1, float b1,
+    float x2, float y2, float z2, float a2, float b2,
+    float x3, float y3, float z3, float a3, float b3
+) {
+    // Sort vertices by y-coordinate ascending (y1 <= y2 <= y3)
+    if (y1 > y2) {
+        SwapFloat(&x1, &x2);
+        SwapFloat(&y1, &y2);
+        SwapFloat(&z1, &z2);
+        SwapFloat(&a1, &a2);
+        SwapFloat(&b1, &b2);
+    }
+    if (y1 > y3) {
+        SwapFloat(&x1, &x3);
+        SwapFloat(&y1, &y3);
+        SwapFloat(&z1, &z3);
+        SwapFloat(&a1, &a3);
+        SwapFloat(&b1, &b3);
+    }
+    if (y2 > y3) {
+        SwapFloat(&x2, &x3);
+        SwapFloat(&y2, &y3);
+        SwapFloat(&z2, &z3);
+        SwapFloat(&a2, &a3);
+        SwapFloat(&b2, &b3);
+    }
+
+    // Round y-coordinates and clamp to screen bounds
+    int y_min = max(    (int)ceilf(y1 - 0.5f), 0);
+    int y_mid = min(max((int)ceilf(y2 - 0.5f), 0), g_screen_height);
+    int y_max = min(    (int)ceilf(y3 - 0.5f),     g_screen_height);
+
+    if (y_min >= y_max) {
+        return; // skip if no pixels to draw
+    }
+
+    // Prepare the triangle vertices for perspective-correct texture interpolation
+    z1 = 1.0f / z1;
+    z2 = 1.0f / z2;
+    z3 = 1.0f / z3;
+
+    a1 *= z1;
+    b1 *= z1;
+
+    a2 *= z2;
+    b2 *= z2;
+
+    a3 *= z3;
+    b3 *= z3;
+
+    // Precalculate edges
+    float dy13 = y3 - y1;
+    float dx13 = x3 - x1;
+    float dz13 = z3 - z1;
+    float da13 = a3 - a1;
+    float db13 = b3 - b1;
+
+    float dy12 = y2 - y1;
+    float dx12 = x2 - x1;
+    float dz12 = z2 - z1;
+    float da12 = a2 - a1;
+    float db12 = b2 - b1;
+
+    float dy23 = y3 - y2;
+    float dx23 = x3 - x2;
+    float dz23 = z3 - z2;
+    float da23 = a3 - a2;
+    float db23 = b3 - b2;
+
+    // Draw the top part of the triangle
+    for (int y = y_min; y < y_mid; y++) {
+        float pixel_center = (float)y + 0.5f;
+        float lt = (pixel_center - y1) / dy13;
+        float rt = (pixel_center - y1) / dy12;
+        DrawTriangle_Span(
+            texture, transparency, y,
+            x1 + dx13 * lt,
+            z1 + dz13 * lt,
+            a1 + da13 * lt,
+            b1 + db13 * lt,
+            x1 + dx12 * rt,
+            z1 + dz12 * rt,
+            a1 + da12 * rt,
+            b1 + db12 * rt
+        );
+    }
+
+    // Draw the bottom part of the triangle
+    for (int y = y_mid; y < y_max; y++) {
+        float pixel_center = (float)y + 0.5f;
+        float lt = (pixel_center - y1) / dy13;
+        float rt = (pixel_center - y2) / dy23;
+        DrawTriangle_Span(
+            texture, transparency, y,
+            x1 + dx13 * lt,
+            z1 + dz13 * lt,
+            a1 + da13 * lt,
+            b1 + db13 * lt,
+            x2 + dx23 * rt,
+            z2 + dz23 * rt,
+            a2 + da23 * rt,
+            b2 + db23 * rt
+        );
     }
 }

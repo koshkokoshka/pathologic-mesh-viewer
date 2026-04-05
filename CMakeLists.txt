@@ -3,6 +3,8 @@ project(pathologic_mesh_viewer C)
 
 set(CMAKE_C_STANDARD 11)
 
+add_subdirectory(zlib-1.3.1)
+
 add_executable(pathologic_mesh_viewer WIN32
         src/main.c
         src/clip_line.c
@@ -14,4 +16,4 @@ add_executable(pathologic_mesh_viewer WIN32
         src/load_texture.c
         src/app.rc
 )
-target_link_libraries(pathologic_mesh_viewer Comctl32.lib Shlwapi.lib Windowscodecs)
+target_link_libraries(pathologic_mesh_viewer Comctl32.lib Shlwapi.lib Windowscodecs zlibstatic)
